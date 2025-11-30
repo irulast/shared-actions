@@ -15,14 +15,15 @@ Build and push Docker images using Kaniko (daemonless, secure container builds).
     cache-repo: registry.example.com/cache/myapp
 ```
 
-### `setup-kubectl`
-Configure kubectl for Kubernetes cluster access.
+### `bump-version`
+Bump semantic version and sync across VERSION, package.json, and Cargo.toml files.
 
 ```yaml
-- uses: irulast/shared-actions/setup-kubectl@v1
+- uses: irulast/shared-actions/bump-version@v1
   with:
-    context: my-cluster
-    namespace: production
+    bump-type: 'patch'  # major, minor, or patch
+    sync-package-json: 'frontend/package.json'
+    sync-cargo-toml: 'services/*/Cargo.toml'
 ```
 
 ### `git-commit-push`
@@ -31,8 +32,18 @@ Commit and push changes (useful for GitOps workflows).
 ```yaml
 - uses: irulast/shared-actions/git-commit-push@v1
   with:
-    message: "Update deployment to ${{ github.sha }}"
-    files: "infrastructure/"
+    message: "chore: bump version to ${{ steps.version.outputs.new-version }}"
+    files: "VERSION frontend/package.json services/"
+```
+
+### `setup-kubectl`
+Configure kubectl for Kubernetes cluster access.
+
+```yaml
+- uses: irulast/shared-actions/setup-kubectl@v1
+  with:
+    context: my-cluster
+    namespace: production
 ```
 
 ## Usage
