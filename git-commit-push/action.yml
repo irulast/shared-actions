@@ -1,0 +1,86 @@
+name: 'Git Commit and Push'
+description: 'Commit changes and push to repository (useful for GitOps workflows)'
+author: 'irulast'
+
+inputs:
+  message:
+    description: 'Commit message'
+    required: true
+  files:
+    description: 'Files to add (space-separated, or "." for all)'
+    required: false
+    default: '.'
+  author-name:
+    description: 'Git author name'
+    required: false
+    default: 'GitHub Actions'
+  author-email:
+    description: 'Git author email'
+    required: false
+    default: 'actions@github.com'
+  branch:
+    description: 'Branch to push to (leave empty for current branch)'
+    required: false
+    default: ''
+  force:
+    description: 'Force push'
+    required: false
+    default: 'false'
+  skip-if-empty:
+    description: 'Skip commit if no changes'
+    required: false
+    default: 'true'
+
+outputs:
+  committed:
+    description: 'Whether a commit was made'
+    value: ${{ steps.commit.outputs.committed }}
+  sha:
+    description: 'Commit SHA (if committed)'
+    value: ${{ steps.commit.outputs.sha }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure git
+      shell: bash
+      run: |
+        git config user.name "${{ inputs.author-name }}"
+        git config user.email "${{ inputs.author-email }}"
+
+    - name: Add and commit
+      id: commit
+      shell: bash
+      run: |
+        # Add files
+        git add ${{ inputs.files }}
+
+        # Check for changes
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+          if [ "${{ inputs.skip-if-empty }}" = "true" ]; then
+            echo "committed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+        fi
+
+        # Commit
+        git commit -m "${{ inputs.message }}"
+        echo "committed=true" >> $GITHUB_OUTPUT
+        echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+    - name: Push
+      if: steps.commit.outputs.committed == 'true'
+      shell: bash
+      run: |
+        BRANCH="${{ inputs.branch }}"
+        if [ -z "$BRANCH" ]; then
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        fi
+
+        FORCE_FLAG=""
+        if [ "${{ inputs.force }}" = "true" ]; then
+          FORCE_FLAG="--force"
+        fi
+
+        git push origin "$BRANCH" $FORCE_FLAG

@@ -1,0 +1,63 @@
+name: 'Setup kubectl'
+description: 'Configure kubectl for Kubernetes cluster access'
+author: 'irulast'
+
+inputs:
+  kubeconfig:
+    description: 'Base64-encoded kubeconfig content'
+    required: false
+    default: ''
+  context:
+    description: 'Kubernetes context to use'
+    required: false
+    default: ''
+  namespace:
+    description: 'Default namespace to use'
+    required: false
+    default: ''
+  version:
+    description: 'kubectl version to install (leave empty to skip installation)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install kubectl
+      if: inputs.version != ''
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+        fi
+        curl -LO "https://dl.k8s.io/release/${VERSION}/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/kubectl
+        kubectl version --client
+
+    - name: Configure kubeconfig
+      if: inputs.kubeconfig != ''
+      shell: bash
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ inputs.kubeconfig }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+
+    - name: Set context
+      if: inputs.context != ''
+      shell: bash
+      run: |
+        kubectl config use-context "${{ inputs.context }}"
+
+    - name: Set namespace
+      if: inputs.namespace != ''
+      shell: bash
+      run: |
+        kubectl config set-context --current --namespace="${{ inputs.namespace }}"
+
+    - name: Verify connection
+      shell: bash
+      run: |
+        echo "Kubernetes cluster info:"
+        kubectl cluster-info 2>/dev/null || echo "Note: Cluster connection not verified (may need in-cluster credentials)"
