@@ -1,0 +1,30 @@
+name: 'Get Version'
+description: 'Read version from VERSION file and get short SHA'
+author: 'irulast'
+
+inputs:
+  version-file:
+    description: 'Path to VERSION file'
+    required: false
+    default: 'VERSION'
+
+outputs:
+  version:
+    description: 'Version string from VERSION file'
+    value: ${{ steps.version.outputs.version }}
+  sha-short:
+    description: 'Short git SHA (7 characters)'
+    value: ${{ steps.version.outputs.sha_short }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get version info
+      id: version
+      shell: sh
+      run: |
+        VERSION=$(cat ${{ inputs.version-file }} | tr -d '[:space:]')
+        SHA_SHORT=$(echo $GITHUB_SHA | cut -c1-7)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "sha_short=$SHA_SHORT" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION, SHA: $SHA_SHORT"

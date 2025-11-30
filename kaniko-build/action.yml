@@ -49,30 +49,30 @@ runs:
   steps:
     - name: Build with Kaniko
       id: build
-      shell: bash
+      shell: sh
       run: |
         # Build Kaniko arguments
-        KANIKO_ARGS=""
-        KANIKO_ARGS="$KANIKO_ARGS --context=${{ inputs.context }}"
-        KANIKO_ARGS="$KANIKO_ARGS --dockerfile=${{ inputs.dockerfile }}"
+        KANIKO_ARGS="--context=${{ inputs.context }} --dockerfile=${{ inputs.dockerfile }}"
 
         # Add destinations (supports multiple, one per line)
-        DESTINATIONS="${{ inputs.destination }}"
-        while IFS= read -r dest; do
-          dest=$(echo "$dest" | tr -d '[:space:]')
+        # Write to temp file to handle multiline input
+        printf '%s\n' "${{ inputs.destination }}" > /tmp/destinations.txt
+        while IFS= read -r dest || [ -n "$dest" ]; do
+          dest=$(printf '%s' "$dest" | tr -d '[:space:]')
           if [ -n "$dest" ]; then
             KANIKO_ARGS="$KANIKO_ARGS --destination=$dest"
           fi
-        done <<< "$DESTINATIONS"
+        done < /tmp/destinations.txt
 
         # Add build args
-        BUILD_ARGS="${{ inputs.build-args }}"
+        BUILD_ARGS='${{ inputs.build-args }}'
         if [ -n "$BUILD_ARGS" ]; then
-          while IFS= read -r arg; do
+          printf '%s\n' "$BUILD_ARGS" > /tmp/buildargs.txt
+          while IFS= read -r arg || [ -n "$arg" ]; do
             if [ -n "$arg" ]; then
               KANIKO_ARGS="$KANIKO_ARGS --build-arg=$arg"
             fi
-          done <<< "$BUILD_ARGS"
+          done < /tmp/buildargs.txt
         fi
 
         # Cache settings
@@ -89,9 +89,8 @@ runs:
         fi
 
         # Extra arguments
-        EXTRA="${{ inputs.extra-args }}"
-        if [ -n "$EXTRA" ]; then
-          KANIKO_ARGS="$KANIKO_ARGS $EXTRA"
+        if [ -n "${{ inputs.extra-args }}" ]; then
+          KANIKO_ARGS="$KANIKO_ARGS ${{ inputs.extra-args }}"
         fi
 
         # Output the command for debugging
@@ -100,6 +99,6 @@ runs:
         # Run Kaniko
         /kaniko/executor $KANIKO_ARGS | tee /tmp/kaniko-output.txt
 
-        # Extract digest from output
-        DIGEST=$(grep -oP 'digest: sha256:[a-f0-9]+' /tmp/kaniko-output.txt | tail -1 | cut -d: -f2-)
+        # Extract digest from output (POSIX-compatible)
+        DIGEST=$(grep 'digest: sha256:' /tmp/kaniko-output.txt | tail -1 | sed 's/.*digest: //')
         echo "digest=$DIGEST" >> $GITHUB_OUTPUT

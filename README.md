@@ -1,6 +1,6 @@
 # Shared GitHub Actions
 
-Reusable composite actions for CI/CD workflows.
+Reusable composite actions for CI/CD workflows, designed for use with ARC (Actions Runner Controller) in Kubernetes container mode.
 
 ## Available Actions
 
@@ -8,11 +8,36 @@ Reusable composite actions for CI/CD workflows.
 Build and push Docker images using Kaniko (daemonless, secure container builds).
 
 ```yaml
-- uses: irulast/shared-actions/kaniko-build@v1
+jobs:
+  build:
+    runs-on: self-hosted
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+    steps:
+      - uses: actions/checkout@v4
+      - uses: irulast/shared-actions/kaniko-build@v1
+        with:
+          destination: registry.example.com/myapp:${{ github.sha }}
+          cache: 'true'
+          cache-repo: registry.example.com/cache/myapp
+```
+
+### `get-version`
+Read version from VERSION file and get short git SHA.
+
+```yaml
+- uses: irulast/shared-actions/get-version@v1
+  id: version
+# Outputs: version, sha-short
+```
+
+### `validate-migrations`
+Validate SQL migration file naming convention (Flyway format: `V<timestamp>__<description>.sql`).
+
+```yaml
+- uses: irulast/shared-actions/validate-migrations@v1
   with:
-    destination: registry.example.com/myapp:${{ github.sha }}
-    cache: 'true'
-    cache-repo: registry.example.com/cache/myapp
+    migrations-path: migrations
 ```
 
 ### `bump-version`
@@ -46,19 +71,26 @@ Configure kubectl for Kubernetes cluster access.
     namespace: production
 ```
 
-## Usage
+## Usage with ARC Kubernetes Mode
 
-These actions are designed to be used with self-hosted runners. Reference them in your workflows:
+These actions are designed for ARC runners using Kubernetes container mode. Each job must specify a `container:` image:
 
 ```yaml
 jobs:
   build:
-    runs-on: [self-hosted, linux]
+    runs-on: self-hosted
+    container:
+      image: gcr.io/kaniko-project/executor:debug
     steps:
       - uses: actions/checkout@v4
+      - uses: irulast/shared-actions/get-version@v1
+        id: version
       - uses: irulast/shared-actions/kaniko-build@v1
         with:
-          destination: my-registry/my-image:latest
+          destination: |
+            my-registry/my-image:${{ steps.version.outputs.version }}
+            my-registry/my-image:${{ steps.version.outputs.sha-short }}
+            my-registry/my-image:latest
 ```
 
 ## License
