@@ -12,7 +12,7 @@ inputs:
     required: false
     default: 'Dockerfile'
   destination:
-    description: 'Image destination (e.g., registry.example.com/image:tag)'
+    description: 'Image destination(s), one per line (e.g., registry.example.com/image:tag)'
     required: true
   build-args:
     description: 'Build arguments (one per line, format: KEY=VALUE)'
@@ -34,10 +34,6 @@ inputs:
     description: 'Kaniko executor image'
     required: false
     default: 'gcr.io/kaniko-project/executor:latest'
-  docker-config-secret:
-    description: 'Name of the Kubernetes secret containing Docker config'
-    required: false
-    default: ''
   extra-args:
     description: 'Additional Kaniko arguments'
     required: false
@@ -59,15 +55,24 @@ runs:
         KANIKO_ARGS=""
         KANIKO_ARGS="$KANIKO_ARGS --context=${{ inputs.context }}"
         KANIKO_ARGS="$KANIKO_ARGS --dockerfile=${{ inputs.dockerfile }}"
-        KANIKO_ARGS="$KANIKO_ARGS --destination=${{ inputs.destination }}"
+
+        # Add destinations (supports multiple, one per line)
+        DESTINATIONS="${{ inputs.destination }}"
+        while IFS= read -r dest; do
+          dest=$(echo "$dest" | tr -d '[:space:]')
+          if [ -n "$dest" ]; then
+            KANIKO_ARGS="$KANIKO_ARGS --destination=$dest"
+          fi
+        done <<< "$DESTINATIONS"
 
         # Add build args
-        if [ -n "${{ inputs.build-args }}" ]; then
+        BUILD_ARGS="${{ inputs.build-args }}"
+        if [ -n "$BUILD_ARGS" ]; then
           while IFS= read -r arg; do
             if [ -n "$arg" ]; then
               KANIKO_ARGS="$KANIKO_ARGS --build-arg=$arg"
             fi
-          done <<< "${{ inputs.build-args }}"
+          done <<< "$BUILD_ARGS"
         fi
 
         # Cache settings
@@ -84,8 +89,9 @@ runs:
         fi
 
         # Extra arguments
-        if [ -n "${{ inputs.extra-args }}" ]; then
-          KANIKO_ARGS="$KANIKO_ARGS ${{ inputs.extra-args }}"
+        EXTRA="${{ inputs.extra-args }}"
+        if [ -n "$EXTRA" ]; then
+          KANIKO_ARGS="$KANIKO_ARGS $EXTRA"
         fi
 
         # Output the command for debugging
