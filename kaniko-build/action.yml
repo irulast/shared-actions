@@ -49,8 +49,10 @@ runs:
   steps:
     - name: Build with Kaniko
       id: build
-      shell: sh
+      shell: bash
       run: |
+        set -o pipefail
+
         # Build Kaniko arguments
         KANIKO_ARGS="--context=${{ inputs.context }} --dockerfile=${{ inputs.dockerfile }}"
 
