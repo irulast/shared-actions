@@ -14,7 +14,7 @@ inputs:
   token:
     description: 'GitHub token for authentication'
     required: false
-    default: ''
+    default: ${{ github.token }}
   fetch-depth:
     description: 'Number of commits to fetch (0 for full history)'
     required: false
