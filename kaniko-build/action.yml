@@ -53,22 +53,8 @@ runs:
       run: |
         set -o pipefail
 
-        # Debug: Check if docker config is mounted
-        echo "=== Debug: Checking Kaniko Docker Config ==="
-        echo "DOCKER_CONFIG env var: ${DOCKER_CONFIG:-NOT SET}"
-        echo "Contents of /kaniko/.docker:"
-        ls -la /kaniko/.docker/ 2>/dev/null || echo "/kaniko/.docker not found"
-        if [ -f /kaniko/.docker/config.json ]; then
-          echo "config.json exists, checking content (credentials redacted):"
-          cat /kaniko/.docker/config.json | sed 's/"password":"[^"]*"/"password":"***"/g' | sed 's/"auth":"[^"]*"/"auth":"***"/g'
-        else
-          echo "WARNING: /kaniko/.docker/config.json not found!"
-        fi
-        echo ""
-        echo "Setting DOCKER_CONFIG explicitly..."
+        # Set DOCKER_CONFIG for Kaniko authentication
         export DOCKER_CONFIG=/kaniko/.docker
-        echo "=== End Debug ==="
-        echo ""
 
         # Build Kaniko arguments
         KANIKO_ARGS="--context=${{ inputs.context }} --dockerfile=${{ inputs.dockerfile }}"
@@ -115,9 +101,11 @@ runs:
         # Output the command for debugging
         echo "Kaniko command: /kaniko/executor $KANIKO_ARGS"
 
-        # Run Kaniko
-        /kaniko/executor $KANIKO_ARGS | tee /tmp/kaniko-output.txt
+        # Run Kaniko and capture output
+        KANIKO_OUTPUT=$(/kaniko/executor $KANIKO_ARGS 2>&1 | tee /dev/stderr)
 
         # Extract digest from output (POSIX-compatible)
-        DIGEST=$(grep 'digest: sha256:' /tmp/kaniko-output.txt | tail -1 | sed 's/.*digest: //')
-        echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+        DIGEST=$(echo "$KANIKO_OUTPUT" | grep 'digest: sha256:' | tail -1 | sed 's/.*digest: //' || true)
+        if [ -n "$DIGEST" ]; then
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+        fi
