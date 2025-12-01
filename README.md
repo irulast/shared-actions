@@ -4,6 +4,29 @@ Reusable composite actions for CI/CD workflows, designed for use with ARC (Actio
 
 ## Available Actions
 
+### `checkout`
+Shell-based git checkout for containers without Node.js (like Kaniko). Use this instead of `actions/checkout@v4` when running in minimal containers.
+
+```yaml
+jobs:
+  build:
+    runs-on: self-hosted
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+    steps:
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/kaniko-build@v1
+        with:
+          destination: registry.example.com/myapp:latest
+```
+
+**Inputs:**
+- `repository` - Repository to checkout (default: current repository)
+- `ref` - Git ref to checkout (default: triggering ref)
+- `token` - GitHub token for private repos
+- `fetch-depth` - Number of commits to fetch (default: 1)
+- `path` - Checkout path relative to workspace
+
 ### `kaniko-build`
 Build and push Docker images using Kaniko (daemonless, secure container builds).
 
@@ -14,7 +37,7 @@ jobs:
     container:
       image: gcr.io/kaniko-project/executor:debug
     steps:
-      - uses: actions/checkout@v4
+      - uses: irulast/shared-actions/checkout@v1  # Use shell-based checkout for Kaniko
       - uses: irulast/shared-actions/kaniko-build@v1
         with:
           destination: registry.example.com/myapp:${{ github.sha }}
@@ -82,7 +105,7 @@ jobs:
     container:
       image: gcr.io/kaniko-project/executor:debug
     steps:
-      - uses: actions/checkout@v4
+      - uses: irulast/shared-actions/checkout@v1  # Shell-based checkout for Kaniko
       - uses: irulast/shared-actions/get-version@v1
         id: version
       - uses: irulast/shared-actions/kaniko-build@v1

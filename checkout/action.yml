@@ -1,0 +1,101 @@
+name: 'Git Checkout'
+description: 'Checkout repository using pure shell commands (for containers without Node.js)'
+author: 'irulast'
+
+inputs:
+  repository:
+    description: 'Repository to checkout (owner/repo)'
+    required: false
+    default: ''
+  ref:
+    description: 'Git ref to checkout (branch, tag, or SHA)'
+    required: false
+    default: ''
+  token:
+    description: 'GitHub token for authentication'
+    required: false
+    default: ''
+  fetch-depth:
+    description: 'Number of commits to fetch (0 for full history)'
+    required: false
+    default: '1'
+  path:
+    description: 'Relative path under $GITHUB_WORKSPACE to place the repository'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      shell: sh
+      env:
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REF: ${{ inputs.ref }}
+        INPUT_FETCH_DEPTH: ${{ inputs.fetch-depth }}
+        INPUT_PATH: ${{ inputs.path }}
+      run: |
+        # Determine repository
+        if [ -n "$INPUT_REPOSITORY" ]; then
+          REPO="$INPUT_REPOSITORY"
+        else
+          REPO="$GITHUB_REPOSITORY"
+        fi
+
+        # Determine checkout directory
+        if [ -n "$INPUT_PATH" ]; then
+          CHECKOUT_DIR="$GITHUB_WORKSPACE/$INPUT_PATH"
+        else
+          CHECKOUT_DIR="$GITHUB_WORKSPACE"
+        fi
+
+        # Determine ref to checkout
+        if [ -n "$INPUT_REF" ]; then
+          REF="$INPUT_REF"
+        elif [ -n "$GITHUB_HEAD_REF" ]; then
+          # Pull request
+          REF="$GITHUB_HEAD_REF"
+        else
+          # Push event - use the SHA
+          REF="$GITHUB_SHA"
+        fi
+
+        # Build clone URL
+        if [ -n "$INPUT_TOKEN" ]; then
+          CLONE_URL="https://x-access-token:${INPUT_TOKEN}@github.com/${REPO}.git"
+        else
+          CLONE_URL="https://github.com/${REPO}.git"
+        fi
+
+        # Build git clone arguments
+        DEPTH_ARG=""
+        if [ "$INPUT_FETCH_DEPTH" != "0" ]; then
+          DEPTH_ARG="--depth=$INPUT_FETCH_DEPTH"
+        fi
+
+        echo "Cloning $REPO to $CHECKOUT_DIR"
+        echo "Ref: $REF"
+
+        # Clean checkout directory if it exists
+        if [ -d "$CHECKOUT_DIR" ] && [ "$CHECKOUT_DIR" != "/" ]; then
+          rm -rf "$CHECKOUT_DIR"/*
+          rm -rf "$CHECKOUT_DIR"/.[!.]*
+        fi
+
+        # Clone the repository
+        git clone $DEPTH_ARG "$CLONE_URL" "$CHECKOUT_DIR"
+
+        # Change to checkout directory
+        cd "$CHECKOUT_DIR"
+
+        # Checkout the specific ref
+        if [ -n "$REF" ] && [ "$REF" != "$(git rev-parse HEAD)" ]; then
+          # Fetch the specific ref if needed
+          if ! git cat-file -e "$REF" 2>/dev/null; then
+            git fetch origin "$REF" $DEPTH_ARG
+          fi
+          git checkout "$REF" 2>/dev/null || git checkout -b "$REF" "origin/$REF" 2>/dev/null || git checkout "$REF"
+        fi
+
+        echo "Checked out $(git rev-parse HEAD)"
