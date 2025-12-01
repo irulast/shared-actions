@@ -35,8 +35,7 @@ RUN apk add --no-cache \
     # Build essentials
     make \
     # Required for rootless buildkit
-    shadow \
-    newuidmap
+    shadow-uidmap
 
 # Install kubectl
 ARG KUBECTL_VERSION=1.31.0
