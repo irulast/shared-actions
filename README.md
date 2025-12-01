@@ -5,17 +5,17 @@ Reusable composite actions for CI/CD workflows, designed for use with ARC (Actio
 ## Available Actions
 
 ### `checkout`
-Shell-based git checkout for containers without Node.js (like Kaniko). Use this instead of `actions/checkout@v4` when running in minimal containers.
+Shell-based git checkout for containers without Node.js. Use this instead of `actions/checkout@v4` when running in minimal containers.
 
 ```yaml
 jobs:
   build:
     runs-on: self-hosted
     container:
-      image: gcr.io/kaniko-project/executor:debug
+      image: your-registry/buildkit-builder:1.0.0
     steps:
       - uses: irulast/shared-actions/checkout@v1
-      - uses: irulast/shared-actions/kaniko-build@v1
+      - uses: irulast/shared-actions/buildkit-build@v1
         with:
           destination: registry.example.com/myapp:latest
 ```
@@ -27,52 +27,43 @@ jobs:
 - `fetch-depth` - Number of commits to fetch (default: 1)
 - `path` - Checkout path relative to workspace
 
-### `registry-login`
-Configure container registry authentication for Kaniko builds. Copies a mounted Kubernetes docker config secret to where Kaniko expects it.
+### `buildkit-build`
+Build and push Docker images using BuildKit (daemonless, rootless, secure container builds). BuildKit provides better caching, full Dockerfile syntax support, and improved performance compared to legacy tools.
 
 ```yaml
 jobs:
   build:
     runs-on: self-hosted
     container:
-      image: gcr.io/kaniko-project/executor:debug
-      volumes:
-        - name: registry-creds
-          secret:
-            secretName: my-registry-push  # Your push secret
+      image: your-registry/buildkit-builder:1.0.0
     steps:
       - uses: irulast/shared-actions/checkout@v1
-      - uses: irulast/shared-actions/registry-login@v1
-      - uses: irulast/shared-actions/kaniko-build@v1
-        with:
-          destination: registry.example.com/myapp:latest
-```
-
-**Inputs:**
-- `config-path` - Path to mounted docker config.json (default: `/secrets/registry/.dockerconfigjson`)
-
-### `kaniko-build`
-Build and push Docker images using Kaniko (daemonless, secure container builds).
-
-```yaml
-jobs:
-  build:
-    runs-on: self-hosted
-    container:
-      image: gcr.io/kaniko-project/executor:debug
-      volumes:
-        - name: registry-creds
-          secret:
-            secretName: my-registry-push
-    steps:
-      - uses: irulast/shared-actions/checkout@v1
-      - uses: irulast/shared-actions/registry-login@v1
-      - uses: irulast/shared-actions/kaniko-build@v1
+      - uses: irulast/shared-actions/buildkit-build@v1
         with:
           destination: registry.example.com/myapp:${{ github.sha }}
           cache: 'true'
           cache-repo: registry.example.com/cache/myapp
 ```
+
+**Inputs:**
+- `context` - Build context path (default: `.`)
+- `dockerfile` - Path to Dockerfile (default: `Dockerfile`)
+- `destination` - Image destination(s), one per line (required)
+- `build-args` - Build arguments, one per line (format: `KEY=VALUE`)
+- `target` - Target stage for multi-stage builds
+- `cache` - Enable layer caching (default: `true`)
+- `cache-repo` - Cache repository for registry-based caching
+- `cache-mode` - Cache mode: `min` or `max` (default: `max`)
+- `push` - Push image to registry (default: `true`)
+- `platforms` - Target platforms (e.g., `linux/amd64,linux/arm64`)
+- `secrets` - Build secrets, one per line (format: `id=ID,src=PATH`)
+- `extra-args` - Additional BuildKit arguments
+
+**Outputs:**
+- `digest` - Image digest (sha256:...)
+
+**Cache Warming:**
+BuildKit's registry cache with `mode=max` automatically caches all intermediate layers, providing efficient cache warming without external tools. Each build exports its cache to the registry, which subsequent builds can import.
 
 ### `get-version`
 Read version from VERSION file and get short git SHA.
@@ -150,6 +141,21 @@ Configure kubectl for Kubernetes cluster access.
     namespace: production
 ```
 
+## Builder Images
+
+### `buildkit-builder`
+A general-purpose CI/CD builder image with BuildKit for container builds. Includes:
+- BuildKit (daemonless, rootless)
+- Git, curl, wget, jq, yq
+- kubectl, helm
+- Common build utilities
+
+Build and push to your registry:
+```bash
+docker build -t your-registry/buildkit-builder:1.0.0 buildkit-builder/
+docker push your-registry/buildkit-builder:1.0.0
+```
+
 ## Usage with ARC Kubernetes Mode
 
 These actions are designed for ARC runners using Kubernetes container mode. Each job must specify a `container:` image:
@@ -159,17 +165,19 @@ jobs:
   build:
     runs-on: self-hosted
     container:
-      image: gcr.io/kaniko-project/executor:debug
+      image: your-registry/buildkit-builder:1.0.0
     steps:
-      - uses: irulast/shared-actions/checkout@v1  # Shell-based checkout for Kaniko
+      - uses: irulast/shared-actions/checkout@v1
       - uses: irulast/shared-actions/get-version@v1
         id: version
-      - uses: irulast/shared-actions/kaniko-build@v1
+      - uses: irulast/shared-actions/buildkit-build@v1
         with:
           destination: |
             my-registry/my-image:${{ steps.version.outputs.version }}
             my-registry/my-image:${{ steps.version.outputs.sha-short }}
             my-registry/my-image:latest
+          cache: 'true'
+          cache-repo: my-registry/cache/my-image
 ```
 
 ## License

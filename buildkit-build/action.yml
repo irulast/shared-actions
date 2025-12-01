@@ -1,0 +1,182 @@
+name: 'BuildKit Build'
+description: 'Build and push Docker images using BuildKit (daemonless, rootless, secure)'
+author: 'irulast'
+
+inputs:
+  context:
+    description: 'Build context path'
+    required: false
+    default: '.'
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  destination:
+    description: 'Image destination(s), one per line (e.g., registry.example.com/image:tag)'
+    required: true
+  build-args:
+    description: 'Build arguments (one per line, format: KEY=VALUE)'
+    required: false
+    default: ''
+  target:
+    description: 'Target stage to build (for multi-stage builds)'
+    required: false
+    default: ''
+  cache:
+    description: 'Enable layer caching'
+    required: false
+    default: 'true'
+  cache-repo:
+    description: 'Cache repository (e.g., registry.example.com/cache/image)'
+    required: false
+    default: ''
+  cache-mode:
+    description: 'Cache mode: min (default layers only) or max (all layers including intermediate)'
+    required: false
+    default: 'max'
+  push:
+    description: 'Push the image to registry'
+    required: false
+    default: 'true'
+  platforms:
+    description: 'Target platforms (e.g., linux/amd64,linux/arm64)'
+    required: false
+    default: ''
+  secrets:
+    description: 'Build secrets (one per line, format: id=ID,src=PATH or id=ID,env=ENV_VAR)'
+    required: false
+    default: ''
+  extra-args:
+    description: 'Additional BuildKit arguments'
+    required: false
+    default: ''
+
+outputs:
+  digest:
+    description: 'Image digest'
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build with BuildKit
+      id: build
+      shell: bash
+      run: |
+        set -o pipefail
+
+        # Configure DOCKER_CONFIG for authentication
+        # Check multiple possible locations for registry credentials
+        if [ -f "/home/buildkit/.docker/config.json" ]; then
+          export DOCKER_CONFIG="/home/buildkit/.docker"
+        elif [ -f "$HOME/.docker/config.json" ]; then
+          export DOCKER_CONFIG="$HOME/.docker"
+        else
+          # Default to buildkit user's home
+          export DOCKER_CONFIG="/home/buildkit/.docker"
+          mkdir -p "$DOCKER_CONFIG"
+        fi
+        echo "Using DOCKER_CONFIG=$DOCKER_CONFIG"
+
+        # Build BuildKit arguments
+        BUILDKIT_ARGS=""
+
+        # Frontend (dockerfile parser)
+        BUILDKIT_ARGS="$BUILDKIT_ARGS --frontend=dockerfile.v0"
+
+        # Context and Dockerfile
+        BUILDKIT_ARGS="$BUILDKIT_ARGS --local=context=${{ inputs.context }}"
+        BUILDKIT_ARGS="$BUILDKIT_ARGS --local=dockerfile=$(dirname ${{ inputs.dockerfile }})"
+
+        # Dockerfile path within the context
+        DOCKERFILE_NAME=$(basename ${{ inputs.dockerfile }})
+        if [ "$DOCKERFILE_NAME" != "Dockerfile" ]; then
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=filename=$DOCKERFILE_NAME"
+        fi
+
+        # Target stage
+        if [ -n "${{ inputs.target }}" ]; then
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=target=${{ inputs.target }}"
+        fi
+
+        # Platform
+        if [ -n "${{ inputs.platforms }}" ]; then
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=platform=${{ inputs.platforms }}"
+        fi
+
+        # Build output - handle push vs no-push and multiple destinations
+        OUTPUT_SPEC="type=image"
+
+        # Add destinations (supports multiple, one per line)
+        DEST_NAMES=""
+        printf '%s\n' "${{ inputs.destination }}" > /tmp/destinations.txt
+        while IFS= read -r dest || [ -n "$dest" ]; do
+          dest=$(printf '%s' "$dest" | tr -d '[:space:]')
+          if [ -n "$dest" ]; then
+            if [ -n "$DEST_NAMES" ]; then
+              DEST_NAMES="$DEST_NAMES,$dest"
+            else
+              DEST_NAMES="$dest"
+            fi
+          fi
+        done < /tmp/destinations.txt
+
+        OUTPUT_SPEC="$OUTPUT_SPEC,name=$DEST_NAMES"
+
+        if [ "${{ inputs.push }}" = "true" ]; then
+          OUTPUT_SPEC="$OUTPUT_SPEC,push=true"
+        fi
+
+        BUILDKIT_ARGS="$BUILDKIT_ARGS --output=$OUTPUT_SPEC"
+
+        # Build args
+        BUILD_ARGS='${{ inputs.build-args }}'
+        if [ -n "$BUILD_ARGS" ]; then
+          printf '%s\n' "$BUILD_ARGS" > /tmp/buildargs.txt
+          while IFS= read -r arg || [ -n "$arg" ]; do
+            if [ -n "$arg" ]; then
+              BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=build-arg:$arg"
+            fi
+          done < /tmp/buildargs.txt
+        fi
+
+        # Secrets
+        SECRETS='${{ inputs.secrets }}'
+        if [ -n "$SECRETS" ]; then
+          printf '%s\n' "$SECRETS" > /tmp/secrets.txt
+          while IFS= read -r secret || [ -n "$secret" ]; do
+            if [ -n "$secret" ]; then
+              BUILDKIT_ARGS="$BUILDKIT_ARGS --secret=$secret"
+            fi
+          done < /tmp/secrets.txt
+        fi
+
+        # Cache settings - BuildKit uses --export-cache and --import-cache
+        if [ "${{ inputs.cache }}" = "true" ] && [ -n "${{ inputs.cache-repo }}" ]; then
+          CACHE_REPO="${{ inputs.cache-repo }}"
+          CACHE_MODE="${{ inputs.cache-mode }}"
+
+          # Import cache from registry (try to use existing cache)
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --import-cache=type=registry,ref=$CACHE_REPO"
+
+          # Export cache to registry
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --export-cache=type=registry,ref=$CACHE_REPO,mode=$CACHE_MODE,image-manifest=true,oci-mediatypes=true"
+        fi
+
+        # Extra arguments
+        if [ -n "${{ inputs.extra-args }}" ]; then
+          BUILDKIT_ARGS="$BUILDKIT_ARGS ${{ inputs.extra-args }}"
+        fi
+
+        # Output the command for debugging
+        echo "BuildKit command: buildctl-daemonless.sh build $BUILDKIT_ARGS"
+
+        # Run BuildKit daemonless and capture output
+        BUILDKIT_OUTPUT=$(buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1 | tee /dev/stderr)
+
+        # Extract digest from output
+        DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+        if [ -n "$DIGEST" ]; then
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "Image digest: $DIGEST"
+        fi
