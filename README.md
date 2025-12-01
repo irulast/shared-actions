@@ -80,8 +80,13 @@ Read version from VERSION file and get short git SHA.
 ```yaml
 - uses: irulast/shared-actions/get-version@v1
   id: version
+  with:
+    version-file: frontend/VERSION  # Optional, defaults to VERSION
 # Outputs: version, sha-short
 ```
+
+**Inputs:**
+- `version-file` - Path to VERSION file (default: `VERSION`)
 
 ### `validate-migrations`
 Validate SQL migration file naming convention (Flyway format: `V<timestamp>__<description>.sql`).
@@ -99,19 +104,41 @@ Bump semantic version and sync across VERSION, package.json, and Cargo.toml file
 - uses: irulast/shared-actions/bump-version@v1
   with:
     bump-type: 'patch'  # major, minor, or patch
+    version-file: services/VERSION  # Optional, defaults to VERSION
     sync-package-json: 'frontend/package.json'
     sync-cargo-toml: 'services/*/Cargo.toml'
 ```
 
+**Inputs:**
+- `bump-type` - Version bump type: `major`, `minor`, or `patch` (required)
+- `version-file` - Path to VERSION file (default: `VERSION`)
+- `sync-package-json` - Glob pattern for package.json files to sync (optional)
+- `sync-cargo-toml` - Glob pattern for Cargo.toml files to sync (optional)
+
 ### `git-commit-push`
-Commit and push changes (useful for GitOps workflows).
+Commit and push changes with automatic rebase retry for version bump commits.
+
+When multiple workflows try to push version bumps simultaneously, this action will automatically detect if the intervening commits are all version bumps (contain `[skip ci]` or match `chore(*): bump` pattern), rebase on top of them, and retry the push.
 
 ```yaml
 - uses: irulast/shared-actions/git-commit-push@v1
   with:
-    message: "chore: bump version to ${{ steps.version.outputs.new-version }}"
-    files: "VERSION frontend/package.json services/"
+    message: "chore(frontend): bump version to ${{ steps.version.outputs.new-version }} [skip ci]"
+    files: "frontend/VERSION frontend/package.json"
 ```
+
+**Inputs:**
+- `message` - Commit message (required)
+- `files` - Files to add, space-separated or `.` for all (default: `.`)
+- `author-name` - Git author name (default: `GitHub Actions`)
+- `author-email` - Git author email (default: `actions@github.com`)
+- `branch` - Branch to push to (default: current branch)
+- `force` - Force push (default: `false`)
+- `skip-if-empty` - Skip commit if no changes (default: `true`)
+
+**Outputs:**
+- `committed` - Whether a commit was made (`true`/`false`)
+- `sha` - Commit SHA (if committed)
 
 ### `setup-kubectl`
 Configure kubectl for Kubernetes cluster access.

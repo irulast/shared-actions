@@ -69,7 +69,7 @@ runs:
         echo "committed=true" >> $GITHUB_OUTPUT
         echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-    - name: Push
+    - name: Push with rebase retry
       if: steps.commit.outputs.committed == 'true'
       shell: bash
       run: |
@@ -83,4 +83,78 @@ runs:
           FORCE_FLAG="--force"
         fi
 
-        git push origin "$BRANCH" $FORCE_FLAG
+        MAX_RETRIES=3
+        RETRY_COUNT=0
+
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+          if git push origin "$BRANCH" $FORCE_FLAG 2>&1; then
+            echo "Push successful"
+            exit 0
+          fi
+
+          RETRY_COUNT=$((RETRY_COUNT + 1))
+          echo "Push failed (attempt $RETRY_COUNT of $MAX_RETRIES)"
+
+          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "Max retries reached, failing"
+            exit 1
+          fi
+
+          # Fetch latest changes
+          git fetch origin "$BRANCH"
+
+          # Check commits between our base and remote HEAD
+          LOCAL_BASE=$(git rev-parse HEAD~1)
+          REMOTE_HEAD=$(git rev-parse origin/"$BRANCH")
+
+          # Get commits we need to rebase over
+          NEW_COMMITS=$(git log --oneline "$LOCAL_BASE".."$REMOTE_HEAD" 2>/dev/null || echo "")
+
+          if [ -z "$NEW_COMMITS" ]; then
+            echo "No new commits to rebase over, retrying push..."
+            sleep 2
+            continue
+          fi
+
+          echo "New commits since our base:"
+          echo "$NEW_COMMITS"
+
+          # Check if ALL new commits are version bump commits
+          # Pattern: commits containing "[skip ci]" or "bump version" (case insensitive)
+          ALL_VERSION_BUMPS=true
+          while IFS= read -r commit_line; do
+            if [ -z "$commit_line" ]; then
+              continue
+            fi
+            COMMIT_SHA=$(echo "$commit_line" | awk '{print $1}')
+            COMMIT_MSG=$(git log -1 --format="%s" "$COMMIT_SHA")
+
+            # Check for version bump patterns
+            if echo "$COMMIT_MSG" | grep -qiE '(\[skip ci\]|bump version|chore\(.*\): bump)'; then
+              echo "  ✓ Version bump commit: $COMMIT_MSG"
+            else
+              echo "  ✗ Non-version-bump commit: $COMMIT_MSG"
+              ALL_VERSION_BUMPS=false
+              break
+            fi
+          done <<< "$NEW_COMMITS"
+
+          if [ "$ALL_VERSION_BUMPS" = "true" ]; then
+            echo "All intervening commits are version bumps, rebasing..."
+
+            # Rebase our commit on top of remote
+            if git rebase origin/"$BRANCH"; then
+              echo "Rebase successful, retrying push..."
+            else
+              echo "Rebase failed, aborting"
+              git rebase --abort 2>/dev/null || true
+              exit 1
+            fi
+          else
+            echo "Non-version-bump commits detected, cannot auto-rebase"
+            echo "Next build will handle version bump"
+            exit 1
+          fi
+
+          sleep 1
+        done
