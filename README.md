@@ -27,6 +27,30 @@ jobs:
 - `fetch-depth` - Number of commits to fetch (default: 1)
 - `path` - Checkout path relative to workspace
 
+### `registry-login`
+Configure container registry authentication for Kaniko builds. Copies a mounted Kubernetes docker config secret to where Kaniko expects it.
+
+```yaml
+jobs:
+  build:
+    runs-on: self-hosted
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+      volumes:
+        - name: registry-creds
+          secret:
+            secretName: my-registry-push  # Your push secret
+    steps:
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/registry-login@v1
+      - uses: irulast/shared-actions/kaniko-build@v1
+        with:
+          destination: registry.example.com/myapp:latest
+```
+
+**Inputs:**
+- `config-path` - Path to mounted docker config.json (default: `/secrets/registry/.dockerconfigjson`)
+
 ### `kaniko-build`
 Build and push Docker images using Kaniko (daemonless, secure container builds).
 
@@ -36,8 +60,13 @@ jobs:
     runs-on: self-hosted
     container:
       image: gcr.io/kaniko-project/executor:debug
+      volumes:
+        - name: registry-creds
+          secret:
+            secretName: my-registry-push
     steps:
-      - uses: irulast/shared-actions/checkout@v1  # Use shell-based checkout for Kaniko
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/registry-login@v1
       - uses: irulast/shared-actions/kaniko-build@v1
         with:
           destination: registry.example.com/myapp:${{ github.sha }}

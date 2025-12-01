@@ -1,0 +1,28 @@
+name: 'Registry Login'
+description: 'Configure container registry authentication for Kaniko builds from mounted secret'
+author: 'irulast'
+
+inputs:
+  config-path:
+    description: 'Path to mounted docker config.json (from Kubernetes secret)'
+    required: false
+    default: '/secrets/registry/.dockerconfigjson'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure registry authentication
+      shell: sh
+      run: |
+        # Create docker config directory for Kaniko
+        mkdir -p /kaniko/.docker
+
+        # Copy mounted secret to Kaniko config location
+        if [ -f "${{ inputs.config-path }}" ]; then
+          cp "${{ inputs.config-path }}" /kaniko/.docker/config.json
+          echo "Registry authentication configured from ${{ inputs.config-path }}"
+        else
+          echo "Error: Docker config not found at ${{ inputs.config-path }}"
+          echo "Ensure the registry secret is mounted as a volume in your workflow"
+          exit 1
+        fi
