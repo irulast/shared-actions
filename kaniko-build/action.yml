@@ -55,6 +55,7 @@ runs:
 
         # Debug: Check if docker config is mounted
         echo "=== Debug: Checking Kaniko Docker Config ==="
+        echo "DOCKER_CONFIG env var: ${DOCKER_CONFIG:-NOT SET}"
         echo "Contents of /kaniko/.docker:"
         ls -la /kaniko/.docker/ 2>/dev/null || echo "/kaniko/.docker not found"
         if [ -f /kaniko/.docker/config.json ]; then
@@ -63,6 +64,9 @@ runs:
         else
           echo "WARNING: /kaniko/.docker/config.json not found!"
         fi
+        echo ""
+        echo "Setting DOCKER_CONFIG explicitly..."
+        export DOCKER_CONFIG=/kaniko/.docker
         echo "=== End Debug ==="
         echo ""
 
