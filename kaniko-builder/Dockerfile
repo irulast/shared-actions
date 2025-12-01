@@ -54,6 +54,9 @@ RUN chmod +x /kaniko/executor \
 # Create kaniko directories (required by Kaniko)
 RUN mkdir -p /kaniko/.docker
 
+# Set DOCKER_CONFIG environment variable (required by Kaniko for authentication)
+ENV DOCKER_CONFIG=/kaniko/.docker
+
 # Set up git safe directory for GitHub Actions workspace
 RUN git config --global --add safe.directory '*'
 
