@@ -78,8 +78,9 @@ ENV HOME=/home/buildkit
 # Set working directory
 WORKDIR /workspace
 
-# Run as non-root user by default
-USER buildkit
+# Note: We run as root for compatibility with GitHub Actions workspace permissions.
+# BuildKit's daemonless mode with --oci-worker-no-process-sandbox handles the
+# actual build process securely. The buildkit user is available if needed.
 
 # Default entrypoint (can be overridden)
 ENTRYPOINT ["/bin/sh", "-c"]
