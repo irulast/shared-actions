@@ -43,14 +43,14 @@ runs:
   using: 'composite'
   steps:
     - name: Configure git
-      shell: bash
+      shell: sh
       run: |
         git config user.name "${{ inputs.author-name }}"
         git config user.email "${{ inputs.author-email }}"
 
     - name: Add and commit
       id: commit
-      shell: bash
+      shell: sh
       run: |
         # Add files
         git add ${{ inputs.files }}
@@ -71,7 +71,7 @@ runs:
 
     - name: Push with rebase retry
       if: steps.commit.outputs.committed == 'true'
-      shell: bash
+      shell: sh
       run: |
         BRANCH="${{ inputs.branch }}"
         if [ -z "$BRANCH" ]; then
@@ -122,7 +122,7 @@ runs:
           # Check if ALL new commits are version bump commits
           # Pattern: commits containing "[skip ci]" or "bump version" (case insensitive)
           ALL_VERSION_BUMPS=true
-          while IFS= read -r commit_line; do
+          echo "$NEW_COMMITS" | while IFS= read -r commit_line; do
             if [ -z "$commit_line" ]; then
               continue
             fi
@@ -131,13 +131,20 @@ runs:
 
             # Check for version bump patterns
             if echo "$COMMIT_MSG" | grep -qiE '(\[skip ci\]|bump version|chore\(.*\): bump)'; then
-              echo "  ✓ Version bump commit: $COMMIT_MSG"
+              echo "  Version bump commit: $COMMIT_MSG"
             else
-              echo "  ✗ Non-version-bump commit: $COMMIT_MSG"
-              ALL_VERSION_BUMPS=false
+              echo "  Non-version-bump commit: $COMMIT_MSG"
+              # Write to a temp file to signal non-version-bump found
+              echo "false" > /tmp/all_version_bumps
               break
             fi
-          done <<< "$NEW_COMMITS"
+          done
+
+          # Check if a non-version-bump was found
+          if [ -f /tmp/all_version_bumps ]; then
+            ALL_VERSION_BUMPS=false
+            rm -f /tmp/all_version_bumps
+          fi
 
           if [ "$ALL_VERSION_BUMPS" = "true" ]; then
             echo "All intervening commits are version bumps, rebasing..."

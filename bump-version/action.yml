@@ -33,7 +33,7 @@ runs:
   steps:
     - name: Bump version
       id: bump
-      shell: bash
+      shell: sh
       run: |
         VERSION_FILE="${{ inputs.version-file }}"
         BUMP_TYPE="${{ inputs.bump-type }}"
@@ -48,8 +48,10 @@ runs:
         echo "Current version: $OLD_VERSION"
         echo "old_version=$OLD_VERSION" >> $GITHUB_OUTPUT
 
-        # Parse version parts
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
+        # Parse version parts (POSIX-compatible)
+        MAJOR=$(echo "$OLD_VERSION" | cut -d. -f1)
+        MINOR=$(echo "$OLD_VERSION" | cut -d. -f2)
+        PATCH=$(echo "$OLD_VERSION" | cut -d. -f3)
 
         # Bump based on type
         case "$BUMP_TYPE" in
@@ -81,14 +83,14 @@ runs:
 
     - name: Sync package.json
       if: inputs.sync-package-json != ''
-      shell: bash
+      shell: sh
       run: |
         PACKAGE_JSON="${{ inputs.sync-package-json }}"
         NEW_VERSION="${{ steps.bump.outputs.new_version }}"
 
         if [ -f "$PACKAGE_JSON" ]; then
           # Use jq if available, otherwise sed
-          if command -v jq &> /dev/null; then
+          if command -v jq > /dev/null 2>&1; then
             jq ".version = \"$NEW_VERSION\"" "$PACKAGE_JSON" > tmp.json && mv tmp.json "$PACKAGE_JSON"
           else
             sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE_JSON"
@@ -100,7 +102,7 @@ runs:
 
     - name: Sync Cargo.toml files
       if: inputs.sync-cargo-toml != ''
-      shell: bash
+      shell: sh
       run: |
         PATTERN="${{ inputs.sync-cargo-toml }}"
         NEW_VERSION="${{ steps.bump.outputs.new_version }}"
