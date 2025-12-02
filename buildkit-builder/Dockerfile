@@ -52,7 +52,10 @@ RUN curl -L "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | tar
 # Create runner user (UID 1001) to match ARC runner workspace permissions.
 # The runner pod creates workspace directories as UID 1001, so the workflow
 # container must run as the same UID to have write access.
-RUN adduser -D -u 1001 -G root runner
+RUN adduser -D -u 1001 -G root runner \
+    # Configure subuid/subgid for rootless BuildKit user namespace mapping
+    # This allows rootlesskit to create user namespaces for container isolation
+    && echo "runner:100000:65536" | tee /etc/subuid | tee /etc/subgid
 
 # Copy BuildKit binaries from official image
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
