@@ -37,7 +37,7 @@ outputs:
     value: ${{ steps.commit.outputs.committed }}
   sha:
     description: 'Commit SHA (if committed)'
-    value: ${{ steps.commit.outputs.sha }}
+    value: ${{ steps.push.outputs.sha }}
 
 runs:
   using: 'composite'
@@ -67,9 +67,9 @@ runs:
         # Commit
         git commit -m "${{ inputs.message }}"
         echo "committed=true" >> $GITHUB_OUTPUT
-        echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-    - name: Push with rebase retry
+    - name: Push with retry
+      id: push
       if: steps.commit.outputs.committed == 'true'
       shell: sh
       run: |
@@ -78,17 +78,33 @@ runs:
           BRANCH=$(git rev-parse --abbrev-ref HEAD)
         fi
 
+        # Handle detached HEAD (common in CI)
+        if [ "$BRANCH" = "HEAD" ]; then
+          # Try to get branch from GITHUB_REF
+          if [ -n "$GITHUB_REF" ]; then
+            BRANCH=$(echo "$GITHUB_REF" | sed 's|refs/heads/||')
+          else
+            echo "Error: Cannot determine branch name"
+            exit 1
+          fi
+        fi
+
         FORCE_FLAG=""
         if [ "${{ inputs.force }}" = "true" ]; then
           FORCE_FLAG="--force"
         fi
 
-        MAX_RETRIES=3
+        # Store the files we want to commit (for re-applying if needed)
+        FILES="${{ inputs.files }}"
+        COMMIT_MSG="${{ inputs.message }}"
+
+        MAX_RETRIES=5
         RETRY_COUNT=0
 
         while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-          if git push origin "$BRANCH" $FORCE_FLAG 2>&1; then
+          if git push origin "HEAD:$BRANCH" $FORCE_FLAG 2>&1; then
             echo "Push successful"
+            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -100,68 +116,48 @@ runs:
             exit 1
           fi
 
-          # Fetch latest changes
-          git fetch origin "$BRANCH"
+          echo "Fetching latest changes and re-applying our changes..."
 
-          # Check commits between our base and remote HEAD
-          LOCAL_BASE=$(git rev-parse HEAD~1)
-          REMOTE_HEAD=$(git rev-parse origin/"$BRANCH")
-
-          # Get commits we need to rebase over
-          NEW_COMMITS=$(git log --oneline "$LOCAL_BASE".."$REMOTE_HEAD" 2>/dev/null || echo "")
-
-          if [ -z "$NEW_COMMITS" ]; then
-            echo "No new commits to rebase over, retrying push..."
-            sleep 2
-            continue
-          fi
-
-          echo "New commits since our base:"
-          echo "$NEW_COMMITS"
-
-          # Check if ALL new commits are version bump commits
-          # Pattern: commits containing "[skip ci]" or "bump version" (case insensitive)
-          ALL_VERSION_BUMPS=true
-          echo "$NEW_COMMITS" | while IFS= read -r commit_line; do
-            if [ -z "$commit_line" ]; then
-              continue
-            fi
-            COMMIT_SHA=$(echo "$commit_line" | awk '{print $1}')
-            COMMIT_MSG=$(git log -1 --format="%s" "$COMMIT_SHA")
-
-            # Check for version bump patterns
-            if echo "$COMMIT_MSG" | grep -qiE '(\[skip ci\]|bump version|chore\(.*\): bump)'; then
-              echo "  Version bump commit: $COMMIT_MSG"
-            else
-              echo "  Non-version-bump commit: $COMMIT_MSG"
-              # Write to a temp file to signal non-version-bump found
-              echo "false" > /tmp/all_version_bumps
-              break
+          # Save our changed files to a temp location
+          mkdir -p /tmp/git-commit-push-files
+          for file in $FILES; do
+            if [ -f "$file" ]; then
+              # Create directory structure in temp
+              mkdir -p "/tmp/git-commit-push-files/$(dirname "$file")"
+              cp "$file" "/tmp/git-commit-push-files/$file"
+              echo "Saved: $file"
             fi
           done
 
-          # Check if a non-version-bump was found
-          if [ -f /tmp/all_version_bumps ]; then
-            ALL_VERSION_BUMPS=false
-            rm -f /tmp/all_version_bumps
-          fi
+          # Fetch and reset to remote
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
 
-          if [ "$ALL_VERSION_BUMPS" = "true" ]; then
-            echo "All intervening commits are version bumps, rebasing..."
-
-            # Rebase our commit on top of remote
-            if git rebase origin/"$BRANCH"; then
-              echo "Rebase successful, retrying push..."
-            else
-              echo "Rebase failed, aborting"
-              git rebase --abort 2>/dev/null || true
-              exit 1
+          # Re-apply our saved files
+          for file in $FILES; do
+            if [ -f "/tmp/git-commit-push-files/$file" ]; then
+              # Create directory structure if needed
+              mkdir -p "$(dirname "$file")"
+              cp "/tmp/git-commit-push-files/$file" "$file"
+              echo "Restored: $file"
             fi
-          else
-            echo "Non-version-bump commits detected, cannot auto-rebase"
-            echo "Next build will handle version bump"
-            exit 1
+          done
+
+          # Clean up temp files
+          rm -rf /tmp/git-commit-push-files
+
+          # Stage and commit
+          git add $FILES
+
+          # Check if there are actually changes to commit
+          if git diff --cached --quiet; then
+            echo "No changes after re-applying (files already match remote)"
+            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          git commit -m "$COMMIT_MSG"
+          echo "Re-committed changes, retrying push..."
 
           sleep 1
         done
