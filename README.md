@@ -5,14 +5,14 @@ Reusable composite actions for CI/CD workflows, designed for use with ARC (Actio
 ## Available Actions
 
 ### `checkout`
-Shell-based git checkout for containers without Node.js. Use this instead of `actions/checkout@v4` when running in minimal containers.
+Shell-based git checkout for containers without Node.js. Use this instead of `actions/checkout@v4` when running in minimal containers. Automatically configures git safe.directory to handle cross-user ownership.
 
 ```yaml
 jobs:
   build:
     runs-on: self-hosted
     container:
-      image: your-registry/buildkit-builder:1.0.0
+      image: moby/buildkit:v0.18.2
     steps:
       - uses: irulast/shared-actions/checkout@v1
       - uses: irulast/shared-actions/buildkit-build@v1
@@ -28,14 +28,14 @@ jobs:
 - `path` - Checkout path relative to workspace
 
 ### `buildkit-build`
-Build and push Docker images using BuildKit (daemonless, rootless, secure container builds). BuildKit provides better caching, full Dockerfile syntax support, and improved performance compared to legacy tools.
+Build and push Docker images using BuildKit (daemonless, secure container builds). BuildKit provides better caching, full Dockerfile syntax support, and improved performance compared to legacy tools.
 
 ```yaml
 jobs:
   build:
     runs-on: self-hosted
     container:
-      image: your-registry/buildkit-builder:1.0.0
+      image: moby/buildkit:v0.18.2
     steps:
       - uses: irulast/shared-actions/checkout@v1
       - uses: irulast/shared-actions/buildkit-build@v1
@@ -141,31 +141,16 @@ Configure kubectl for Kubernetes cluster access.
     namespace: production
 ```
 
-## Builder Images
-
-### `buildkit-builder`
-A general-purpose CI/CD builder image with BuildKit for container builds. Includes:
-- BuildKit (daemonless, rootless)
-- Git, curl, wget, jq, yq
-- kubectl, helm
-- Common build utilities
-
-Build and push to your registry:
-```bash
-docker build -t your-registry/buildkit-builder:1.0.0 buildkit-builder/
-docker push your-registry/buildkit-builder:1.0.0
-```
-
 ## Usage with ARC Kubernetes Mode
 
-These actions are designed for ARC runners using Kubernetes container mode. Each job must specify a `container:` image:
+These actions are designed for ARC runners using Kubernetes container mode with the official `moby/buildkit` image. Each job must specify a `container:` image:
 
 ```yaml
 jobs:
   build:
     runs-on: self-hosted
     container:
-      image: your-registry/buildkit-builder:1.0.0
+      image: moby/buildkit:v0.18.2
     steps:
       - uses: irulast/shared-actions/checkout@v1
       - uses: irulast/shared-actions/get-version@v1
@@ -179,6 +164,8 @@ jobs:
           cache: 'true'
           cache-repo: my-registry/cache/my-image
 ```
+
+All actions use POSIX-compatible shell scripts (`sh`) to work with minimal container images like the official BuildKit image which doesn't include bash.
 
 ## License
 
