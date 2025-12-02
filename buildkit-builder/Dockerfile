@@ -49,8 +49,10 @@ RUN curl -L "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | tar
     && mv linux-amd64/helm /usr/local/bin/helm \
     && rm -rf linux-amd64
 
-# Create buildkit user (UID 1000 for rootless operation)
-RUN adduser -D -u 1000 -G root buildkit
+# Create runner user (UID 1001) to match ARC runner workspace permissions.
+# The runner pod creates workspace directories as UID 1001, so the workflow
+# container must run as the same UID to have write access.
+RUN adduser -D -u 1001 -G root runner
 
 # Copy BuildKit binaries from official image
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
@@ -62,25 +64,24 @@ RUN chmod +x /usr/local/bin/buildctl \
     /usr/local/bin/buildkitd \
     /usr/local/bin/buildctl-daemonless.sh
 
-# Create directories for buildkit
-RUN mkdir -p /home/buildkit/.local/share/buildkit \
-    /home/buildkit/.docker \
-    && chown -R buildkit:root /home/buildkit
+# Create directories for buildkit in runner home
+RUN mkdir -p /home/runner/.local/share/buildkit \
+    /home/runner/.docker \
+    && chown -R runner:root /home/runner
 
 # Set up git safe directory for GitHub Actions workspace
 RUN git config --global --add safe.directory '*'
 
-# Environment variables
-ENV DOCKER_CONFIG=/home/buildkit/.docker
+# Environment variables - use runner's home for docker config
+ENV DOCKER_CONFIG=/home/runner/.docker
 ENV BUILDKITD_FLAGS="--oci-worker-no-process-sandbox"
-ENV HOME=/home/buildkit
+ENV HOME=/home/runner
 
 # Set working directory
 WORKDIR /workspace
 
-# Note: We run as root for compatibility with GitHub Actions workspace permissions.
-# BuildKit's daemonless mode with --oci-worker-no-process-sandbox handles the
-# actual build process securely. The buildkit user is available if needed.
+# Run as runner user (UID 1001) to match ARC runner workspace permissions
+USER runner
 
 # Default entrypoint (can be overridden)
 ENTRYPOINT ["/bin/sh", "-c"]
