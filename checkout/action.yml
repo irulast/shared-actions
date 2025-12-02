@@ -77,6 +77,10 @@ runs:
         echo "Cloning $REPO to $CHECKOUT_DIR"
         echo "Ref: $REF"
 
+        # Configure git safe.directory to allow operations on directories owned by other users
+        # This is needed when running as root in containers where workspace is owned by runner user
+        git config --global --add safe.directory '*'
+
         # Clean checkout directory if it exists
         if [ -d "$CHECKOUT_DIR" ] && [ "$CHECKOUT_DIR" != "/" ]; then
           rm -rf "$CHECKOUT_DIR"/*
