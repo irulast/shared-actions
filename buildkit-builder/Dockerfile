@@ -58,11 +58,14 @@ RUN adduser -D -u 1001 -G root runner
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
 COPY --from=buildkit /usr/bin/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit /usr/bin/buildctl-daemonless.sh /usr/local/bin/buildctl-daemonless.sh
+# rootlesskit is required by buildctl-daemonless.sh for rootless operation
+COPY --from=buildkit /usr/bin/rootlesskit /usr/local/bin/rootlesskit
 
 # Make buildkit binaries executable
 RUN chmod +x /usr/local/bin/buildctl \
     /usr/local/bin/buildkitd \
-    /usr/local/bin/buildctl-daemonless.sh
+    /usr/local/bin/buildctl-daemonless.sh \
+    /usr/local/bin/rootlesskit
 
 # Create directories for buildkit in runner home
 # XDG_RUNTIME_DIR is required by buildctl-daemonless.sh
