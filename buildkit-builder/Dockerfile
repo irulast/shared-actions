@@ -49,50 +49,39 @@ RUN curl -L "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | tar
     && mv linux-amd64/helm /usr/local/bin/helm \
     && rm -rf linux-amd64
 
-# Create runner user (UID 1001) to match ARC runner workspace permissions.
-# The runner pod creates workspace directories as UID 1001, so the workflow
-# container must run as the same UID to have write access.
-RUN adduser -D -u 1001 -G root runner \
-    # Configure subuid/subgid for rootless BuildKit user namespace mapping
-    # This allows rootlesskit to create user namespaces for container isolation
-    && echo "runner:100000:65536" | tee /etc/subuid | tee /etc/subgid
-
 # Copy BuildKit binaries from official image
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
 COPY --from=buildkit /usr/bin/buildkitd /usr/local/bin/buildkitd
 COPY --from=buildkit /usr/bin/buildctl-daemonless.sh /usr/local/bin/buildctl-daemonless.sh
-# rootlesskit is required by buildctl-daemonless.sh for rootless operation
-COPY --from=buildkit /usr/bin/rootlesskit /usr/local/bin/rootlesskit
 
 # Make buildkit binaries executable
 RUN chmod +x /usr/local/bin/buildctl \
     /usr/local/bin/buildkitd \
-    /usr/local/bin/buildctl-daemonless.sh \
-    /usr/local/bin/rootlesskit
+    /usr/local/bin/buildctl-daemonless.sh
 
-# Create directories for buildkit in runner home
-# XDG_RUNTIME_DIR is required by buildctl-daemonless.sh
-RUN mkdir -p /home/runner/.local/share/buildkit \
-    /home/runner/.docker \
-    /run/user/1001 \
-    && chown -R runner:root /home/runner \
-    && chown runner:root /run/user/1001 \
-    && chmod 700 /run/user/1001
+# Create directories for buildkit
+# Running as root, so use /root for home and /run/buildkit for socket
+RUN mkdir -p /root/.local/share/buildkit \
+    /root/.docker \
+    /run/buildkit
 
 # Set up git safe directory for GitHub Actions workspace
 RUN git config --global --add safe.directory '*'
 
-# Environment variables - use runner's home for docker config
-ENV DOCKER_CONFIG=/home/runner/.docker
+# Environment variables
+# DOCKER_CONFIG points to where registry credentials are mounted
+ENV DOCKER_CONFIG=/root/.docker
+# --oci-worker-no-process-sandbox is required for containerized BuildKit
 ENV BUILDKITD_FLAGS="--oci-worker-no-process-sandbox"
-ENV HOME=/home/runner
-ENV XDG_RUNTIME_DIR=/run/user/1001
+ENV HOME=/root
 
 # Set working directory
 WORKDIR /workspace
 
-# Run as runner user (UID 1001) to match ARC runner workspace permissions
-USER runner
+# Run as root - BuildKit daemonless mode works best as root in containers
+# since rootless mode requires user namespaces which K8s often doesn't allow.
+# Root can access workspace files created by ARC runner (UID 1001).
+USER root
 
 # Default entrypoint (can be overridden)
 ENTRYPOINT ["/bin/sh", "-c"]
