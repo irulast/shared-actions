@@ -61,19 +61,21 @@ runs:
   steps:
     - name: Build with BuildKit
       id: build
-      shell: bash
+      shell: sh
       run: |
-        set -o pipefail
+        set -e
 
         # Configure DOCKER_CONFIG for authentication
         # Check multiple possible locations for registry credentials
-        if [ -f "/home/buildkit/.docker/config.json" ]; then
-          export DOCKER_CONFIG="/home/buildkit/.docker"
+        if [ -f "/root/.docker/config.json" ]; then
+          export DOCKER_CONFIG="/root/.docker"
         elif [ -f "$HOME/.docker/config.json" ]; then
           export DOCKER_CONFIG="$HOME/.docker"
+        elif [ -f "/home/runner/.docker/config.json" ]; then
+          export DOCKER_CONFIG="/home/runner/.docker"
         else
-          # Default to buildkit user's home
-          export DOCKER_CONFIG="/home/buildkit/.docker"
+          # Default to HOME
+          export DOCKER_CONFIG="$HOME/.docker"
           mkdir -p "$DOCKER_CONFIG"
         fi
         echo "Using DOCKER_CONFIG=$DOCKER_CONFIG"
