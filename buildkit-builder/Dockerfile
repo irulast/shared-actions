@@ -65,9 +65,13 @@ RUN chmod +x /usr/local/bin/buildctl \
     /usr/local/bin/buildctl-daemonless.sh
 
 # Create directories for buildkit in runner home
+# XDG_RUNTIME_DIR is required by buildctl-daemonless.sh
 RUN mkdir -p /home/runner/.local/share/buildkit \
     /home/runner/.docker \
-    && chown -R runner:root /home/runner
+    /run/user/1001 \
+    && chown -R runner:root /home/runner \
+    && chown runner:root /run/user/1001 \
+    && chmod 700 /run/user/1001
 
 # Set up git safe directory for GitHub Actions workspace
 RUN git config --global --add safe.directory '*'
@@ -76,6 +80,7 @@ RUN git config --global --add safe.directory '*'
 ENV DOCKER_CONFIG=/home/runner/.docker
 ENV BUILDKITD_FLAGS="--oci-worker-no-process-sandbox"
 ENV HOME=/home/runner
+ENV XDG_RUNTIME_DIR=/run/user/1001
 
 # Set working directory
 WORKDIR /workspace
