@@ -3,8 +3,8 @@
 # and common tools needed for GitHub Actions workflows.
 # Replaces Kaniko with the actively maintained BuildKit project.
 
-# Stage 1: Get BuildKit binaries from official rootless image
-FROM moby/buildkit:v0.18.2-rootless AS buildkit
+# Stage 1: Get BuildKit binaries from official image (non-rootless)
+FROM moby/buildkit:v0.18.2 AS buildkit
 
 # Stage 2: Build the final image
 FROM alpine:3.20
@@ -33,9 +33,7 @@ RUN apk add --no-cache \
     unzip \
     zip \
     # Build essentials
-    make \
-    # Required for rootless buildkit
-    shadow-uidmap
+    make
 
 # Install kubectl
 ARG KUBECTL_VERSION=1.31.0
