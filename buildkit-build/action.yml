@@ -178,26 +178,55 @@ runs:
         echo "Using BuildKit state directory: $BUILDKIT_STATE_DIR"
 
         # Run BuildKit daemonless and capture output
-        # Write output to temp file and run buildctl in a way that captures its exit code
         BUILDKIT_OUTPUT_FILE=$(mktemp)
-        BUILDKIT_EXIT_CODE_FILE=$(mktemp)
 
-        # Run buildctl in a subshell to capture its exit code
-        (buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1; echo $? > "$BUILDKIT_EXIT_CODE_FILE") | tee "$BUILDKIT_OUTPUT_FILE"
+        # Run buildctl and capture exit code properly
+        # We write exit code to a file since we're piping through tee
+        # Using a FIFO to capture output while preserving exit code
+        set +e
+        {
+          buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1
+          echo $? > "${BUILDKIT_OUTPUT_FILE}.exitcode"
+        } | tee "$BUILDKIT_OUTPUT_FILE"
+        set -e
 
-        BUILDKIT_EXIT_CODE=$(cat "$BUILDKIT_EXIT_CODE_FILE")
-        BUILDKIT_OUTPUT=$(cat "$BUILDKIT_OUTPUT_FILE")
-        rm -f "$BUILDKIT_OUTPUT_FILE" "$BUILDKIT_EXIT_CODE_FILE"
+        BUILDKIT_EXIT_CODE=$(cat "${BUILDKIT_OUTPUT_FILE}.exitcode" 2>/dev/null || echo "1")
+        BUILDKIT_OUTPUT=$(cat "$BUILDKIT_OUTPUT_FILE" 2>/dev/null || echo "")
+        rm -f "$BUILDKIT_OUTPUT_FILE" "${BUILDKIT_OUTPUT_FILE}.exitcode"
 
-        # Extract digest from output
-        DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+        # Validate exit code is numeric, default to 1 (failure) if not
+        case "$BUILDKIT_EXIT_CODE" in
+          ''|*[!0-9]*)
+            echo "Warning: Invalid exit code '$BUILDKIT_EXIT_CODE', treating as failure"
+            BUILDKIT_EXIT_CODE=1
+            ;;
+        esac
+
+        # Also check output for error indicators (belt and suspenders)
+        if echo "$BUILDKIT_OUTPUT" | grep -q "^error: failed to solve"; then
+          echo "Detected 'failed to solve' in output"
+          if [ "$BUILDKIT_EXIT_CODE" -eq 0 ]; then
+            BUILDKIT_EXIT_CODE=1
+          fi
+        fi
+
+        echo "BuildKit exit code: $BUILDKIT_EXIT_CODE"
+
+        # Exit with buildctl's exit code to properly fail the step
+        # Check this BEFORE extracting digest so we fail on build errors
+        if [ "$BUILDKIT_EXIT_CODE" -ne 0 ]; then
+          echo "::error::BuildKit failed with exit code $BUILDKIT_EXIT_CODE"
+          exit "$BUILDKIT_EXIT_CODE"
+        fi
+
+        # Extract digest from output (only on success)
+        # Look for "exporting manifest" or "pushing manifest" lines which indicate actual push
+        DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -E "(exporting|pushing) manifest" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+        if [ -z "$DIGEST" ]; then
+          # Fallback: look for any digest in successful output
+          DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+        fi
         if [ -n "$DIGEST" ]; then
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
           echo "Image digest: $DIGEST"
-        fi
-
-        # Exit with buildctl's exit code to properly fail the step
-        if [ "$BUILDKIT_EXIT_CODE" -ne 0 ]; then
-          echo "BuildKit failed with exit code $BUILDKIT_EXIT_CODE"
-          exit "$BUILDKIT_EXIT_CODE"
         fi
