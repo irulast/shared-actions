@@ -16,6 +16,14 @@ inputs:
     description: 'Path to registry config.json for authentication'
     required: false
     default: ''
+  revision:
+    description: 'Git revision/SHA for org.opencontainers.image.revision annotation'
+    required: false
+    default: ''
+  created:
+    description: 'Build timestamp for org.opencontainers.image.created annotation (RFC 3339)'
+    required: false
+    default: ''
 
 outputs:
   chart-ref:
@@ -25,13 +33,15 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Update Chart.yaml version
+    - name: Update Chart.yaml version and annotations
       shell: sh
       run: |
         set -e
 
         CHART_PATH="${{ inputs.chart-path }}"
         VERSION="${{ inputs.version }}"
+        REVISION="${{ inputs.revision }}"
+        CREATED="${{ inputs.created }}"
 
         if [ ! -f "$CHART_PATH/Chart.yaml" ]; then
           echo "::error::Chart.yaml not found at $CHART_PATH/Chart.yaml"
@@ -43,6 +53,23 @@ runs:
         # Update version and appVersion in Chart.yaml
         sed -i "s/^version:.*/version: $VERSION/" "$CHART_PATH/Chart.yaml"
         sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" "$CHART_PATH/Chart.yaml"
+
+        # Update dynamic OCI annotations if provided
+        if [ -n "$REVISION" ]; then
+          if grep -q "org.opencontainers.image.revision:" "$CHART_PATH/Chart.yaml"; then
+            sed -i "s|org.opencontainers.image.revision:.*|org.opencontainers.image.revision: \"$REVISION\"|" "$CHART_PATH/Chart.yaml"
+          elif grep -q "^annotations:" "$CHART_PATH/Chart.yaml"; then
+            sed -i "/^annotations:/a\\  org.opencontainers.image.revision: \"$REVISION\"" "$CHART_PATH/Chart.yaml"
+          fi
+        fi
+
+        if [ -n "$CREATED" ]; then
+          if grep -q "org.opencontainers.image.created:" "$CHART_PATH/Chart.yaml"; then
+            sed -i "s|org.opencontainers.image.created:.*|org.opencontainers.image.created: \"$CREATED\"|" "$CHART_PATH/Chart.yaml"
+          elif grep -q "^annotations:" "$CHART_PATH/Chart.yaml"; then
+            sed -i "/^annotations:/a\\  org.opencontainers.image.created: \"$CREATED\"" "$CHART_PATH/Chart.yaml"
+          fi
+        fi
 
         echo "Updated Chart.yaml:"
         cat "$CHART_PATH/Chart.yaml"

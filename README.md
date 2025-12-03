@@ -132,7 +132,7 @@ When multiple workflows try to push version bumps simultaneously, this action wi
 - `sha` - Commit SHA (if committed)
 
 ### `helm-push`
-Package and push a Helm chart to an OCI registry. Automatically updates Chart.yaml with the specified version before packaging.
+Package and push a Helm chart to an OCI registry. Automatically updates Chart.yaml with the specified version and optional OCI annotations before packaging.
 
 ```yaml
 jobs:
@@ -142,11 +142,15 @@ jobs:
       image: alpine/helm:latest
     steps:
       - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/get-version@v1
+        id: version
       - uses: irulast/shared-actions/helm-push@v1
         with:
           chart-path: deploy/charts/myapp
           version: ${{ steps.version.outputs.version }}
           registry: oci://registry.example.com/charts
+          revision: ${{ github.sha }}
+          created: ${{ github.event.head_commit.timestamp }}
 ```
 
 **Inputs:**
@@ -154,6 +158,8 @@ jobs:
 - `version` - Chart version (updates Chart.yaml version and appVersion) (required)
 - `registry` - OCI registry URL (required)
 - `registry-config` - Path to registry config.json for authentication
+- `revision` - Git revision/SHA for `org.opencontainers.image.revision` annotation
+- `created` - Build timestamp (RFC 3339) for `org.opencontainers.image.created` annotation
 
 **Outputs:**
 - `chart-ref` - Full OCI reference to the pushed chart
