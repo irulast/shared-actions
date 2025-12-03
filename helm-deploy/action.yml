@@ -1,0 +1,119 @@
+name: 'Helm Deploy'
+description: 'Deploy a Helm chart from an OCI registry'
+author: 'irulast'
+
+inputs:
+  release-name:
+    description: 'Helm release name'
+    required: true
+  chart:
+    description: 'OCI chart reference (e.g., oci://registry.example.com/charts/myapp)'
+    required: true
+  version:
+    description: 'Chart version to deploy'
+    required: true
+  namespace:
+    description: 'Kubernetes namespace'
+    required: true
+  values:
+    description: 'Helm values to set (YAML format)'
+    required: false
+    default: ''
+  set:
+    description: 'Values to set via --set (one per line, format: key=value)'
+    required: false
+    default: ''
+  wait:
+    description: 'Wait for resources to be ready'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Timeout for helm operations'
+    required: false
+    default: '5m'
+  registry-config:
+    description: 'Path to registry config.json for authentication'
+    required: false
+    default: ''
+  create-namespace:
+    description: 'Create namespace if it does not exist'
+    required: false
+    default: 'false'
+
+outputs:
+  revision:
+    description: 'Helm release revision number'
+    value: ${{ steps.deploy.outputs.revision }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Deploy chart
+      id: deploy
+      shell: sh
+      run: |
+        set -e
+
+        RELEASE_NAME="${{ inputs.release-name }}"
+        CHART="${{ inputs.chart }}"
+        VERSION="${{ inputs.version }}"
+        NAMESPACE="${{ inputs.namespace }}"
+        WAIT="${{ inputs.wait }}"
+        TIMEOUT="${{ inputs.timeout }}"
+        REGISTRY_CONFIG="${{ inputs.registry-config }}"
+        CREATE_NAMESPACE="${{ inputs.create-namespace }}"
+
+        # Configure registry authentication
+        if [ -n "$REGISTRY_CONFIG" ]; then
+          export HELM_REGISTRY_CONFIG="$REGISTRY_CONFIG"
+        elif [ -f "/root/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="/root/.docker/config.json"
+        elif [ -f "$HOME/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="$HOME/.docker/config.json"
+        fi
+
+        if [ -n "$HELM_REGISTRY_CONFIG" ]; then
+          echo "Using registry config: $HELM_REGISTRY_CONFIG"
+        fi
+
+        # Build helm upgrade command
+        HELM_ARGS="upgrade --install $RELEASE_NAME $CHART"
+        HELM_ARGS="$HELM_ARGS --version $VERSION"
+        HELM_ARGS="$HELM_ARGS --namespace $NAMESPACE"
+        HELM_ARGS="$HELM_ARGS --timeout $TIMEOUT"
+
+        if [ "$WAIT" = "true" ]; then
+          HELM_ARGS="$HELM_ARGS --wait"
+        fi
+
+        if [ "$CREATE_NAMESPACE" = "true" ]; then
+          HELM_ARGS="$HELM_ARGS --create-namespace"
+        fi
+
+        # Handle values file
+        VALUES='${{ inputs.values }}'
+        if [ -n "$VALUES" ]; then
+          echo "$VALUES" > /tmp/helm-values.yaml
+          HELM_ARGS="$HELM_ARGS -f /tmp/helm-values.yaml"
+          echo "Using values:"
+          cat /tmp/helm-values.yaml
+        fi
+
+        # Handle --set values
+        SET_VALUES='${{ inputs.set }}'
+        if [ -n "$SET_VALUES" ]; then
+          echo "$SET_VALUES" > /tmp/helm-set.txt
+          while IFS= read -r line || [ -n "$line" ]; do
+            if [ -n "$line" ]; then
+              HELM_ARGS="$HELM_ARGS --set $line"
+            fi
+          done < /tmp/helm-set.txt
+        fi
+
+        echo "Running: helm $HELM_ARGS"
+        helm $HELM_ARGS
+
+        # Get revision
+        REVISION=$(helm history "$RELEASE_NAME" -n "$NAMESPACE" --max 1 -o json | grep -o '"revision":[0-9]*' | head -1 | sed 's/"revision"://')
+        echo "revision=$REVISION" >> $GITHUB_OUTPUT
+        echo "Deployed revision: $REVISION"

@@ -131,6 +131,61 @@ When multiple workflows try to push version bumps simultaneously, this action wi
 - `committed` - Whether a commit was made (`true`/`false`)
 - `sha` - Commit SHA (if committed)
 
+### `helm-push`
+Package and push a Helm chart to an OCI registry. Automatically updates Chart.yaml with the specified version before packaging.
+
+```yaml
+jobs:
+  push-chart:
+    runs-on: self-hosted
+    container:
+      image: alpine/helm:latest
+    steps:
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/helm-push@v1
+        with:
+          chart-path: deploy/charts/myapp
+          version: ${{ steps.version.outputs.version }}
+          registry: oci://registry.example.com/charts
+```
+
+**Inputs:**
+- `chart-path` - Path to the Helm chart directory (required)
+- `version` - Chart version (updates Chart.yaml version and appVersion) (required)
+- `registry` - OCI registry URL (required)
+- `registry-config` - Path to registry config.json for authentication
+
+**Outputs:**
+- `chart-ref` - Full OCI reference to the pushed chart
+
+### `helm-deploy`
+Deploy a Helm chart from an OCI registry. Useful for direct deployments from CI/CD (alternative to GitOps).
+
+```yaml
+- uses: irulast/shared-actions/helm-deploy@v1
+  with:
+    release-name: myapp
+    chart: oci://registry.example.com/charts/myapp
+    version: ${{ steps.version.outputs.version }}
+    namespace: production
+    set: |
+      image.tag=${{ steps.version.outputs.version }}
+```
+
+**Inputs:**
+- `release-name` - Helm release name (required)
+- `chart` - OCI chart reference (required)
+- `version` - Chart version to deploy (required)
+- `namespace` - Kubernetes namespace (required)
+- `values` - Helm values in YAML format
+- `set` - Values to set via --set (one per line, format: `key=value`)
+- `wait` - Wait for resources to be ready (default: `true`)
+- `timeout` - Timeout for helm operations (default: `5m`)
+- `create-namespace` - Create namespace if it does not exist (default: `false`)
+
+**Outputs:**
+- `revision` - Helm release revision number
+
 ### `k8s-job-run`
 Apply and run a Kubernetes Job, optionally waiting for completion. Useful for deployment tasks triggered from CI/CD.
 

@@ -1,0 +1,98 @@
+name: 'Helm Push'
+description: 'Package and push a Helm chart to an OCI registry'
+author: 'irulast'
+
+inputs:
+  chart-path:
+    description: 'Path to the Helm chart directory'
+    required: true
+  version:
+    description: 'Chart version (updates Chart.yaml version and appVersion)'
+    required: true
+  registry:
+    description: 'OCI registry URL (e.g., oci://registry.example.com/charts)'
+    required: true
+  registry-config:
+    description: 'Path to registry config.json for authentication'
+    required: false
+    default: ''
+
+outputs:
+  chart-ref:
+    description: 'Full OCI reference to the pushed chart'
+    value: ${{ steps.push.outputs.chart-ref }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update Chart.yaml version
+      shell: sh
+      run: |
+        set -e
+
+        CHART_PATH="${{ inputs.chart-path }}"
+        VERSION="${{ inputs.version }}"
+
+        if [ ! -f "$CHART_PATH/Chart.yaml" ]; then
+          echo "::error::Chart.yaml not found at $CHART_PATH/Chart.yaml"
+          exit 1
+        fi
+
+        echo "Updating Chart.yaml with version $VERSION"
+
+        # Update version and appVersion in Chart.yaml
+        sed -i "s/^version:.*/version: $VERSION/" "$CHART_PATH/Chart.yaml"
+        sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" "$CHART_PATH/Chart.yaml"
+
+        echo "Updated Chart.yaml:"
+        cat "$CHART_PATH/Chart.yaml"
+
+    - name: Package and push chart
+      id: push
+      shell: sh
+      run: |
+        set -e
+
+        CHART_PATH="${{ inputs.chart-path }}"
+        VERSION="${{ inputs.version }}"
+        REGISTRY="${{ inputs.registry }}"
+        REGISTRY_CONFIG="${{ inputs.registry-config }}"
+
+        # Configure registry authentication
+        if [ -n "$REGISTRY_CONFIG" ]; then
+          export HELM_REGISTRY_CONFIG="$REGISTRY_CONFIG"
+        elif [ -f "/root/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="/root/.docker/config.json"
+        elif [ -f "$HOME/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="$HOME/.docker/config.json"
+        fi
+
+        if [ -n "$HELM_REGISTRY_CONFIG" ]; then
+          echo "Using registry config: $HELM_REGISTRY_CONFIG"
+        fi
+
+        # Get chart name from Chart.yaml
+        CHART_NAME=$(grep "^name:" "$CHART_PATH/Chart.yaml" | sed 's/name:[[:space:]]*//')
+        echo "Chart name: $CHART_NAME"
+
+        # Package the chart
+        echo "Packaging chart..."
+        helm package "$CHART_PATH" --destination /tmp/helm-packages
+
+        PACKAGE_FILE="/tmp/helm-packages/${CHART_NAME}-${VERSION}.tgz"
+        if [ ! -f "$PACKAGE_FILE" ]; then
+          echo "::error::Package file not found: $PACKAGE_FILE"
+          ls -la /tmp/helm-packages/
+          exit 1
+        fi
+
+        echo "Package created: $PACKAGE_FILE"
+
+        # Push to OCI registry
+        echo "Pushing to $REGISTRY..."
+        helm push "$PACKAGE_FILE" "$REGISTRY"
+
+        # Output the full chart reference
+        CHART_REF="${REGISTRY}/${CHART_NAME}:${VERSION}"
+        echo "chart-ref=$CHART_REF" >> $GITHUB_OUTPUT
+        echo "Pushed chart: $CHART_REF"
