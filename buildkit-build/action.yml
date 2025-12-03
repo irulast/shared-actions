@@ -170,6 +170,13 @@ runs:
         # Output the command for debugging
         echo "BuildKit command: buildctl-daemonless.sh build $BUILDKIT_ARGS"
 
+        # Set BuildKit root to a writable location (fixes permission issues in Kubernetes)
+        # The buildctl-daemonless.sh script passes BUILDKITD_FLAGS to buildkitd
+        BUILDKIT_STATE_DIR="${BUILDKIT_STATE_DIR:-/tmp/buildkit}"
+        mkdir -p "$BUILDKIT_STATE_DIR"
+        export BUILDKITD_FLAGS="${BUILDKITD_FLAGS} --root=$BUILDKIT_STATE_DIR"
+        echo "Using BuildKit state directory: $BUILDKIT_STATE_DIR"
+
         # Run BuildKit daemonless and capture output
         # Write output to temp file and run buildctl in a way that captures its exit code
         BUILDKIT_OUTPUT_FILE=$(mktemp)
