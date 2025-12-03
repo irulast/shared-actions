@@ -131,15 +131,32 @@ When multiple workflows try to push version bumps simultaneously, this action wi
 - `committed` - Whether a commit was made (`true`/`false`)
 - `sha` - Commit SHA (if committed)
 
-### `setup-kubectl`
-Configure kubectl for Kubernetes cluster access.
+### `k8s-job-run`
+Apply and run a Kubernetes Job, optionally waiting for completion. Useful for deployment tasks triggered from CI/CD.
 
 ```yaml
-- uses: irulast/shared-actions/setup-kubectl@v1
+- uses: irulast/shared-actions/k8s-job-run@v1
   with:
-    context: my-cluster
-    namespace: production
+    manifest: deploy/my-job/job.yaml
+    namespace: my-namespace
+    image-tag: ${{ steps.version.outputs.version }}
+    wait: 'true'
+    timeout: '5m'
 ```
+
+**Inputs:**
+- `manifest` - Path to the Job manifest file (required)
+- `namespace` - Kubernetes namespace (if not in manifest)
+- `image-tag` - Image tag to substitute (replaces `${IMAGE_TAG}` in manifest)
+- `wait` - Wait for job completion (default: `true`)
+- `timeout` - Timeout for job completion (default: `5m`)
+- `delete-existing` - Delete existing job with same name before applying (default: `true`)
+
+**Outputs:**
+- `job-name` - Name of the created job
+- `status` - Job completion status (`Succeeded`/`Failed`)
+
+**Note:** Requires the workflow container to have kubectl access to the cluster. When using ARC Kubernetes mode, configure a ServiceAccount with appropriate RBAC permissions in the worker podspec.
 
 ## Usage with ARC Kubernetes Mode
 

@@ -1,0 +1,137 @@
+name: 'Kubernetes Job Run'
+description: 'Apply and run a Kubernetes Job, optionally waiting for completion'
+author: 'irulast'
+
+inputs:
+  manifest:
+    description: 'Path to the Job manifest file'
+    required: true
+  namespace:
+    description: 'Kubernetes namespace (if not specified in manifest)'
+    required: false
+    default: ''
+  image-tag:
+    description: 'Image tag to substitute in the manifest (replaces ${IMAGE_TAG})'
+    required: false
+    default: ''
+  wait:
+    description: 'Wait for job completion'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Timeout for job completion (e.g., 5m, 300s)'
+    required: false
+    default: '5m'
+  delete-existing:
+    description: 'Delete existing job with same name before applying'
+    required: false
+    default: 'true'
+
+outputs:
+  job-name:
+    description: 'Name of the created job'
+    value: ${{ steps.apply.outputs.job-name }}
+  status:
+    description: 'Job completion status (Succeeded/Failed)'
+    value: ${{ steps.wait.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Apply Job
+      id: apply
+      shell: sh
+      run: |
+        set -e
+
+        MANIFEST="${{ inputs.manifest }}"
+        NAMESPACE="${{ inputs.namespace }}"
+        IMAGE_TAG="${{ inputs.image-tag }}"
+        DELETE_EXISTING="${{ inputs.delete-existing }}"
+
+        if [ ! -f "$MANIFEST" ]; then
+          echo "::error::Manifest file not found: $MANIFEST"
+          exit 1
+        fi
+
+        # Substitute IMAGE_TAG if provided
+        if [ -n "$IMAGE_TAG" ]; then
+          echo "Substituting IMAGE_TAG=$IMAGE_TAG in manifest"
+          export IMAGE_TAG
+          PROCESSED_MANIFEST=$(envsubst < "$MANIFEST")
+        else
+          PROCESSED_MANIFEST=$(cat "$MANIFEST")
+        fi
+
+        # Extract job name for later use
+        JOB_NAME=$(echo "$PROCESSED_MANIFEST" | grep -E "^\s*name:" | head -1 | sed 's/.*name:\s*//' | tr -d '"' | tr -d "'")
+        echo "Job name: $JOB_NAME"
+        echo "job-name=$JOB_NAME" >> $GITHUB_OUTPUT
+
+        # Build namespace args
+        NS_ARGS=""
+        if [ -n "$NAMESPACE" ]; then
+          NS_ARGS="-n $NAMESPACE"
+        fi
+
+        # Delete existing job if requested
+        if [ "$DELETE_EXISTING" = "true" ]; then
+          echo "Checking for existing job..."
+          if kubectl get job "$JOB_NAME" $NS_ARGS >/dev/null 2>&1; then
+            echo "Deleting existing job: $JOB_NAME"
+            kubectl delete job "$JOB_NAME" $NS_ARGS --wait=true
+          fi
+        fi
+
+        # Apply the job
+        echo "Applying job manifest..."
+        echo "$PROCESSED_MANIFEST" | kubectl apply $NS_ARGS -f -
+
+        echo "Job applied successfully"
+
+    - name: Wait for Job
+      id: wait
+      if: inputs.wait == 'true'
+      shell: sh
+      run: |
+        set -e
+
+        JOB_NAME="${{ steps.apply.outputs.job-name }}"
+        NAMESPACE="${{ inputs.namespace }}"
+        TIMEOUT="${{ inputs.timeout }}"
+
+        NS_ARGS=""
+        if [ -n "$NAMESPACE" ]; then
+          NS_ARGS="-n $NAMESPACE"
+        fi
+
+        echo "Waiting for job $JOB_NAME to complete (timeout: $TIMEOUT)..."
+
+        # Wait for job completion
+        if kubectl wait --for=condition=complete job/"$JOB_NAME" $NS_ARGS --timeout="$TIMEOUT" 2>/dev/null; then
+          echo "status=Succeeded" >> $GITHUB_OUTPUT
+          echo "Job completed successfully"
+
+          # Show logs
+          echo ""
+          echo "=== Job Logs ==="
+          kubectl logs job/"$JOB_NAME" $NS_ARGS || true
+        else
+          # Check if it failed
+          FAILED=$(kubectl get job "$JOB_NAME" $NS_ARGS -o jsonpath='{.status.failed}' 2>/dev/null || echo "0")
+          if [ "$FAILED" != "0" ] && [ -n "$FAILED" ]; then
+            echo "status=Failed" >> $GITHUB_OUTPUT
+            echo "::error::Job failed"
+
+            # Show logs
+            echo ""
+            echo "=== Job Logs ==="
+            kubectl logs job/"$JOB_NAME" $NS_ARGS || true
+
+            exit 1
+          else
+            echo "status=Timeout" >> $GITHUB_OUTPUT
+            echo "::error::Job timed out"
+            exit 1
+          fi
+        fi
