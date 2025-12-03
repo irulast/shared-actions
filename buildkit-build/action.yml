@@ -174,9 +174,7 @@ runs:
         # The buildctl-daemonless.sh script passes BUILDKITD_FLAGS to buildkitd
         BUILDKIT_STATE_DIR="${BUILDKIT_STATE_DIR:-/tmp/buildkit}"
         mkdir -p "$BUILDKIT_STATE_DIR"
-        # --oci-worker-no-process-sandbox disables process sandboxing which requires
-        # privileged syscalls (like mount) that are often blocked in Kubernetes
-        export BUILDKITD_FLAGS="${BUILDKITD_FLAGS} --root=$BUILDKIT_STATE_DIR --oci-worker-no-process-sandbox"
+        export BUILDKITD_FLAGS="${BUILDKITD_FLAGS} --root=$BUILDKIT_STATE_DIR"
         echo "Using BuildKit state directory: $BUILDKIT_STATE_DIR"
 
         # Run BuildKit daemonless and capture output
