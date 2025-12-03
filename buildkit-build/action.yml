@@ -171,11 +171,26 @@ runs:
         echo "BuildKit command: buildctl-daemonless.sh build $BUILDKIT_ARGS"
 
         # Run BuildKit daemonless and capture output
-        BUILDKIT_OUTPUT=$(buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1 | tee /dev/stderr)
+        # Write output to temp file and run buildctl in a way that captures its exit code
+        BUILDKIT_OUTPUT_FILE=$(mktemp)
+        BUILDKIT_EXIT_CODE_FILE=$(mktemp)
+
+        # Run buildctl in a subshell to capture its exit code
+        (buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1; echo $? > "$BUILDKIT_EXIT_CODE_FILE") | tee "$BUILDKIT_OUTPUT_FILE"
+
+        BUILDKIT_EXIT_CODE=$(cat "$BUILDKIT_EXIT_CODE_FILE")
+        BUILDKIT_OUTPUT=$(cat "$BUILDKIT_OUTPUT_FILE")
+        rm -f "$BUILDKIT_OUTPUT_FILE" "$BUILDKIT_EXIT_CODE_FILE"
 
         # Extract digest from output
         DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
         if [ -n "$DIGEST" ]; then
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
           echo "Image digest: $DIGEST"
+        fi
+
+        # Exit with buildctl's exit code to properly fail the step
+        if [ "$BUILDKIT_EXIT_CODE" -ne 0 ]; then
+          echo "BuildKit failed with exit code $BUILDKIT_EXIT_CODE"
+          exit "$BUILDKIT_EXIT_CODE"
         fi
