@@ -106,9 +106,6 @@ runs:
           BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=platform=${{ inputs.platforms }}"
         fi
 
-        # Build output - handle push vs no-push and multiple destinations
-        OUTPUT_SPEC="type=image"
-
         # Add destinations (supports multiple, one per line)
         DEST_NAMES=""
         printf '%s\n' "${{ inputs.destination }}" > /tmp/destinations.txt
@@ -123,13 +120,13 @@ runs:
           fi
         done < /tmp/destinations.txt
 
-        OUTPUT_SPEC="$OUTPUT_SPEC,name=$DEST_NAMES"
-
+        # Quote the name= value to handle multiple comma-separated destinations
+        # BuildKit requires: type=image,"name=img1,img2",push=true
         if [ "${{ inputs.push }}" = "true" ]; then
-          OUTPUT_SPEC="$OUTPUT_SPEC,push=true"
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --output=type=image,\"name=$DEST_NAMES\",push=true"
+        else
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --output=type=image,\"name=$DEST_NAMES\""
         fi
-
-        BUILDKIT_ARGS="$BUILDKIT_ARGS --output=$OUTPUT_SPEC"
 
         # Build args
         BUILD_ARGS='${{ inputs.build-args }}'
