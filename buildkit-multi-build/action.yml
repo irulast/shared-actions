@@ -42,6 +42,10 @@ inputs:
     description: 'Build secrets (one per line, format: id=ID,src=PATH or id=ID,env=ENV_VAR)'
     required: false
     default: ''
+  network-host:
+    description: 'Use host network mode for build (allows build to access host network services)'
+    required: false
+    default: 'false'
   extra-args:
     description: 'Additional BuildKit arguments'
     required: false
@@ -148,6 +152,12 @@ runs:
           CACHE_REPO="${{ inputs.cache-repo }}"
           CACHE_MODE="${{ inputs.cache-mode }}"
           CACHE_ARGS="--import-cache=type=registry,ref=$CACHE_REPO --export-cache=type=registry,ref=$CACHE_REPO,mode=$CACHE_MODE,image-manifest=true,oci-mediatypes=true"
+        fi
+
+        # Host network mode - allows build to access host network services (e.g., sccache with MinIO)
+        if [ "${{ inputs.network-host }}" = "true" ]; then
+          echo "Enabling host network mode for build"
+          BASE_ARGS="$BASE_ARGS --allow=network.host --opt=network=host"
         fi
 
         # Extra arguments
