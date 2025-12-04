@@ -1,0 +1,215 @@
+name: 'Helm Multi-Push'
+description: 'Package and push multiple Helm charts to an OCI registry in a single job'
+author: 'irulast'
+
+inputs:
+  charts:
+    description: |
+      Chart configurations, one per line in format: chart-path
+      Example:
+        deploy/charts/api
+        deploy/charts/eventstreams
+        deploy/charts/image-processor
+    required: true
+  version:
+    description: 'Chart version (updates Chart.yaml version and appVersion for all charts)'
+    required: true
+  registry:
+    description: 'OCI registry URL (e.g., oci://registry.example.com/charts)'
+    required: true
+  registry-config:
+    description: 'Path to registry config.json for authentication'
+    required: false
+    default: ''
+  revision:
+    description: 'Git revision/SHA for org.opencontainers.image.revision annotation'
+    required: false
+    default: ''
+  created:
+    description: 'Build timestamp for org.opencontainers.image.created annotation (RFC 3339)'
+    required: false
+    default: ''
+
+outputs:
+  chart-refs:
+    description: 'JSON object mapping chart names to their OCI references'
+    value: ${{ steps.push.outputs.chart_refs }}
+  success-count:
+    description: 'Number of successfully pushed charts'
+    value: ${{ steps.push.outputs.success_count }}
+  total-count:
+    description: 'Total number of charts'
+    value: ${{ steps.push.outputs.total_count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Push all charts
+      id: push
+      shell: sh
+      run: |
+        set -e
+
+        VERSION="${{ inputs.version }}"
+        REGISTRY="${{ inputs.registry }}"
+        REVISION="${{ inputs.revision }}"
+        CREATED="${{ inputs.created }}"
+        REGISTRY_CONFIG="${{ inputs.registry-config }}"
+        CHARTS='${{ inputs.charts }}'
+
+        # Configure registry authentication
+        if [ -n "$REGISTRY_CONFIG" ]; then
+          export HELM_REGISTRY_CONFIG="$REGISTRY_CONFIG"
+        elif [ -f "/root/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="/root/.docker/config.json"
+        elif [ -f "$HOME/.docker/config.json" ]; then
+          export HELM_REGISTRY_CONFIG="$HOME/.docker/config.json"
+        fi
+
+        if [ -n "$HELM_REGISTRY_CONFIG" ]; then
+          echo "Using registry config: $HELM_REGISTRY_CONFIG"
+        fi
+
+        # Create temp directory for packages
+        mkdir -p /tmp/helm-packages
+
+        # Count charts
+        TOTAL_COUNT=0
+        SUCCESS_COUNT=0
+        echo "$CHARTS" | while IFS= read -r line || [ -n "$line" ]; do
+          line=$(echo "$line" | xargs)
+          if [ -n "$line" ]; then
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          fi
+        done
+        TOTAL_COUNT=$(echo "$CHARTS" | grep -v '^[[:space:]]*$' | wc -l | xargs)
+        echo "Processing $TOTAL_COUNT charts..."
+        echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+
+        # Track results
+        > /tmp/chart_refs.txt
+
+        # Process each chart
+        echo "$CHARTS" | while IFS= read -r CHART_PATH || [ -n "$CHART_PATH" ]; do
+          # Trim whitespace
+          CHART_PATH=$(echo "$CHART_PATH" | xargs)
+
+          # Skip empty lines
+          if [ -z "$CHART_PATH" ]; then
+            continue
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "Processing chart: $CHART_PATH"
+          echo "=========================================="
+
+          if [ ! -f "$CHART_PATH/Chart.yaml" ]; then
+            echo "::error::Chart.yaml not found at $CHART_PATH/Chart.yaml"
+            continue
+          fi
+
+          # Update version and appVersion
+          echo "Updating Chart.yaml with version $VERSION"
+          sed -i "s/^version:.*/version: $VERSION/" "$CHART_PATH/Chart.yaml"
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" "$CHART_PATH/Chart.yaml"
+
+          # Update dynamic OCI annotations if provided
+          if [ -n "$REVISION" ]; then
+            if grep -q "org.opencontainers.image.revision:" "$CHART_PATH/Chart.yaml"; then
+              sed -i "s|org.opencontainers.image.revision:.*|org.opencontainers.image.revision: \"$REVISION\"|" "$CHART_PATH/Chart.yaml"
+            elif grep -q "^annotations:" "$CHART_PATH/Chart.yaml"; then
+              sed -i "/^annotations:/a\\  org.opencontainers.image.revision: \"$REVISION\"" "$CHART_PATH/Chart.yaml"
+            fi
+          fi
+
+          if [ -n "$CREATED" ]; then
+            if grep -q "org.opencontainers.image.created:" "$CHART_PATH/Chart.yaml"; then
+              sed -i "s|org.opencontainers.image.created:.*|org.opencontainers.image.created: \"$CREATED\"|" "$CHART_PATH/Chart.yaml"
+            elif grep -q "^annotations:" "$CHART_PATH/Chart.yaml"; then
+              sed -i "/^annotations:/a\\  org.opencontainers.image.created: \"$CREATED\"" "$CHART_PATH/Chart.yaml"
+            fi
+          fi
+
+          # Build dependencies if needed
+          if grep -q "^dependencies:" "$CHART_PATH/Chart.yaml"; then
+            echo "Building chart dependencies..."
+            if ! helm dependency build "$CHART_PATH"; then
+              echo "::error::Failed to build dependencies for $CHART_PATH"
+              continue
+            fi
+            echo "Dependencies built successfully"
+          fi
+
+          # Get chart name
+          CHART_NAME=$(grep "^name:" "$CHART_PATH/Chart.yaml" | sed 's/name:[[:space:]]*//')
+          echo "Chart name: $CHART_NAME"
+
+          # Package the chart
+          echo "Packaging chart..."
+          if ! helm package "$CHART_PATH" --destination /tmp/helm-packages; then
+            echo "::error::Failed to package $CHART_PATH"
+            continue
+          fi
+
+          PACKAGE_FILE="/tmp/helm-packages/${CHART_NAME}-${VERSION}.tgz"
+          if [ ! -f "$PACKAGE_FILE" ]; then
+            echo "::error::Package file not found: $PACKAGE_FILE"
+            ls -la /tmp/helm-packages/
+            continue
+          fi
+
+          echo "Package created: $PACKAGE_FILE"
+
+          # Push to OCI registry
+          echo "Pushing to $REGISTRY..."
+          if ! helm push "$PACKAGE_FILE" "$REGISTRY"; then
+            echo "::error::Failed to push $CHART_NAME to registry"
+            continue
+          fi
+
+          CHART_REF="${REGISTRY}/${CHART_NAME}:${VERSION}"
+          echo "Successfully pushed: $CHART_REF"
+          echo "${CHART_NAME}=${CHART_REF}" >> /tmp/chart_refs.txt
+
+          # Clean up package file to save space
+          rm -f "$PACKAGE_FILE"
+        done
+
+        # Count successes and build output
+        SUCCESS_COUNT=0
+        CHART_REFS_JSON="{"
+        FIRST=true
+        if [ -f /tmp/chart_refs.txt ]; then
+          SUCCESS_COUNT=$(wc -l < /tmp/chart_refs.txt | xargs)
+          while IFS='=' read -r key value; do
+            if [ -n "$key" ]; then
+              if [ "$FIRST" = "true" ]; then
+                FIRST=false
+              else
+                CHART_REFS_JSON="$CHART_REFS_JSON,"
+              fi
+              CHART_REFS_JSON="$CHART_REFS_JSON\"$key\":\"$value\""
+            fi
+          done < /tmp/chart_refs.txt
+        fi
+        CHART_REFS_JSON="$CHART_REFS_JSON}"
+
+        echo "success_count=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+        echo "chart_refs=$CHART_REFS_JSON" >> $GITHUB_OUTPUT
+
+        echo ""
+        echo "=========================================="
+        echo "Push Summary"
+        echo "=========================================="
+        echo "Total charts: $TOTAL_COUNT"
+        echo "Successful: $SUCCESS_COUNT"
+        echo "Failed: $((TOTAL_COUNT - SUCCESS_COUNT))"
+
+        # Fail if any chart failed
+        if [ "$SUCCESS_COUNT" -lt "$TOTAL_COUNT" ]; then
+          echo "::error::Some charts failed to push"
+          exit 1
+        fi
+
+        echo "All charts pushed successfully!"

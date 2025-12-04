@@ -213,6 +213,49 @@ jobs:
 **Outputs:**
 - `chart-ref` - Full OCI reference to the pushed chart
 
+### `helm-multi-push`
+Package and push multiple Helm charts to an OCI registry in a single job. This is more efficient than separate jobs because it avoids repeated container startup overhead and can share cached dependencies.
+
+```yaml
+jobs:
+  push-charts:
+    runs-on: self-hosted
+    container:
+      image: alpine/helm:latest
+    steps:
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/get-version@v1
+        id: version
+      - uses: irulast/shared-actions/helm-multi-push@v1
+        with:
+          charts: |
+            deploy/charts/api
+            deploy/charts/eventstreams
+            deploy/charts/image-processor
+          version: ${{ steps.version.outputs.version }}
+          registry: oci://registry.example.com/charts
+          revision: ${{ github.sha }}
+          created: ${{ github.event.head_commit.timestamp }}
+```
+
+**Inputs:**
+- `charts` - Chart paths, one per line (required)
+- `version` - Chart version (updates Chart.yaml version and appVersion for all charts) (required)
+- `registry` - OCI registry URL (required)
+- `registry-config` - Path to registry config.json for authentication
+- `revision` - Git revision/SHA for `org.opencontainers.image.revision` annotation
+- `created` - Build timestamp (RFC 3339) for `org.opencontainers.image.created` annotation
+
+**Outputs:**
+- `chart-refs` - JSON object mapping chart names to their OCI references
+- `success-count` - Number of successfully pushed charts
+- `total-count` - Total number of charts
+
+**Benefits over separate jobs:**
+- Single container startup instead of multiple
+- Shared helm repository cache
+- Simpler workflow with fewer jobs
+
 ### `helm-deploy`
 Deploy a Helm chart from an OCI registry. Useful for direct deployments from CI/CD (alternative to GitOps).
 
