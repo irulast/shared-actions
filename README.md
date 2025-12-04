@@ -132,7 +132,7 @@ When multiple workflows try to push version bumps simultaneously, this action wi
 - `sha` - Commit SHA (if committed)
 
 ### `helm-push`
-Package and push a Helm chart to an OCI registry. Automatically updates Chart.yaml with the specified version and optional OCI annotations before packaging.
+Package and push a Helm chart to an OCI registry. Automatically updates Chart.yaml with the specified version and optional OCI annotations before packaging. If the chart has dependencies defined in Chart.yaml, they are automatically built before packaging.
 
 ```yaml
 jobs:

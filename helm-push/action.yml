@@ -74,6 +74,22 @@ runs:
         echo "Updated Chart.yaml:"
         cat "$CHART_PATH/Chart.yaml"
 
+    - name: Build chart dependencies
+      shell: sh
+      run: |
+        set -e
+
+        CHART_PATH="${{ inputs.chart-path }}"
+
+        # Check if chart has dependencies
+        if grep -q "^dependencies:" "$CHART_PATH/Chart.yaml"; then
+          echo "Building chart dependencies..."
+          helm dependency build "$CHART_PATH"
+          echo "Dependencies built successfully"
+        else
+          echo "No dependencies found, skipping dependency build"
+        fi
+
     - name: Package and push chart
       id: push
       shell: sh
