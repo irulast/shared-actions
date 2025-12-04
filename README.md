@@ -101,7 +101,6 @@ jobs:
 - `cache-mode` - Cache mode: `min` or `max` (default: `max`)
 - `platforms` - Target platforms (e.g., `linux/amd64,linux/arm64`)
 - `secrets` - Build secrets, one per line (format: `id=ID,src=PATH`)
-- `network-host` - Use host network mode for build (default: `false`). Enables `--allow=network.host` and `--opt=network=host` to allow the build to access host network services (e.g., sccache with MinIO).
 - `extra-args` - Additional BuildKit arguments
 
 **Outputs:**
