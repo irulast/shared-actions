@@ -65,6 +65,55 @@ jobs:
 **Cache Warming:**
 BuildKit's registry cache with `mode=max` automatically caches all intermediate layers, providing efficient cache warming without external tools. Each build exports its cache to the registry, which subsequent builds can import.
 
+### `buildkit-multi-build`
+Build and push multiple Docker images from different targets in a single BuildKit session. This is more efficient than separate builds because BuildKit maintains its cache between targets within the same session, eliminating the need to remount dependencies.
+
+```yaml
+jobs:
+  build:
+    runs-on: self-hosted
+    container:
+      image: moby/buildkit:v0.18.2
+    steps:
+      - uses: irulast/shared-actions/checkout@v1
+      - uses: irulast/shared-actions/buildkit-multi-build@v1
+        with:
+          context: ./services
+          dockerfile: ./services/Dockerfile
+          targets: |
+            api|registry.example.com/api:v1,registry.example.com/api:latest
+            worker|registry.example.com/worker:v1,registry.example.com/worker:latest
+            cli|registry.example.com/cli:v1,registry.example.com/cli:latest
+          cache: 'true'
+          cache-repo: registry.example.com/cache/myapp
+          build-args: |
+            VERSION=1.0.0
+            BUILD_DATE=2024-01-01
+```
+
+**Inputs:**
+- `context` - Build context path (default: `.`)
+- `dockerfile` - Path to Dockerfile (default: `Dockerfile`)
+- `targets` - Target configurations, one per line in format: `target|image1,image2,image3` (required)
+- `build-args` - Build arguments, one per line (format: `KEY=VALUE`), applied to all targets
+- `cache` - Enable layer caching (default: `true`)
+- `cache-repo` - Cache repository for registry-based caching
+- `cache-mode` - Cache mode: `min` or `max` (default: `max`)
+- `platforms` - Target platforms (e.g., `linux/amd64,linux/arm64`)
+- `secrets` - Build secrets, one per line (format: `id=ID,src=PATH`)
+- `extra-args` - Additional BuildKit arguments
+
+**Outputs:**
+- `digests` - JSON object mapping targets to their digests
+- `success-count` - Number of successfully built targets
+- `total-count` - Total number of targets
+
+**Benefits over separate builds:**
+- BuildKit maintains internal cache between targets
+- No need to remount dependencies for each target
+- Shared layers are built only once
+- Significantly faster for multi-service monorepos
+
 ### `get-version`
 Read version from VERSION file and get short git SHA.
 

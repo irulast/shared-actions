@@ -1,0 +1,282 @@
+name: 'BuildKit Multi-Target Build'
+description: 'Build and push multiple Docker images from different targets in a single BuildKit session (optimal caching)'
+author: 'irulast'
+
+inputs:
+  context:
+    description: 'Build context path'
+    required: false
+    default: '.'
+  dockerfile:
+    description: 'Path to Dockerfile'
+    required: false
+    default: 'Dockerfile'
+  targets:
+    description: |
+      Target configurations, one per line in format: target|image1,image2,image3
+      Example:
+        cdp-server|registry.example.com/api:v1,registry.example.com/api:latest
+        eventstreams|registry.example.com/eventstreams:v1,registry.example.com/eventstreams:latest
+    required: true
+  build-args:
+    description: 'Build arguments (one per line, format: KEY=VALUE). Applied to all targets.'
+    required: false
+    default: ''
+  cache:
+    description: 'Enable layer caching'
+    required: false
+    default: 'true'
+  cache-repo:
+    description: 'Cache repository (e.g., registry.example.com/cache/image)'
+    required: false
+    default: ''
+  cache-mode:
+    description: 'Cache mode: min (default layers only) or max (all layers including intermediate)'
+    required: false
+    default: 'max'
+  platforms:
+    description: 'Target platforms (e.g., linux/amd64,linux/arm64)'
+    required: false
+    default: ''
+  secrets:
+    description: 'Build secrets (one per line, format: id=ID,src=PATH or id=ID,env=ENV_VAR)'
+    required: false
+    default: ''
+  extra-args:
+    description: 'Additional BuildKit arguments'
+    required: false
+    default: ''
+
+outputs:
+  digests:
+    description: 'JSON object mapping targets to digests'
+    value: ${{ steps.build.outputs.digests }}
+  success-count:
+    description: 'Number of successfully built targets'
+    value: ${{ steps.build.outputs.success_count }}
+  total-count:
+    description: 'Total number of targets'
+    value: ${{ steps.build.outputs.total_count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build all targets with BuildKit
+      id: build
+      shell: sh
+      run: |
+        set -e
+
+        # Configure DOCKER_CONFIG for authentication
+        if [ -f "/root/.docker/config.json" ]; then
+          export DOCKER_CONFIG="/root/.docker"
+        elif [ -f "$HOME/.docker/config.json" ]; then
+          export DOCKER_CONFIG="$HOME/.docker"
+        elif [ -f "/home/runner/.docker/config.json" ]; then
+          export DOCKER_CONFIG="/home/runner/.docker"
+        else
+          export DOCKER_CONFIG="$HOME/.docker"
+          mkdir -p "$DOCKER_CONFIG"
+        fi
+        echo "Using DOCKER_CONFIG=$DOCKER_CONFIG"
+
+        # Set BuildKit root to a writable location
+        BUILDKIT_STATE_DIR="${BUILDKIT_STATE_DIR:-/tmp/buildkit}"
+        mkdir -p "$BUILDKIT_STATE_DIR"
+        export BUILDKITD_FLAGS="${BUILDKITD_FLAGS} --root=$BUILDKIT_STATE_DIR"
+        echo "Using BuildKit state directory: $BUILDKIT_STATE_DIR"
+
+        # Parse targets from input
+        TARGETS='${{ inputs.targets }}'
+        TOTAL_COUNT=0
+        SUCCESS_COUNT=0
+        DIGESTS_JSON="{}"
+
+        # Count total targets
+        echo "$TARGETS" | while IFS= read -r line || [ -n "$line" ]; do
+          line=$(echo "$line" | xargs)
+          if [ -n "$line" ]; then
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          fi
+        done
+        TOTAL_COUNT=$(echo "$TARGETS" | grep -c '|' || echo "0")
+        echo "Building $TOTAL_COUNT targets in sequence..."
+        echo "total_count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+
+        # Build base arguments that apply to all targets
+        BASE_ARGS=""
+        BASE_ARGS="$BASE_ARGS --frontend=dockerfile.v0"
+        BASE_ARGS="$BASE_ARGS --local=context=${{ inputs.context }}"
+        BASE_ARGS="$BASE_ARGS --local=dockerfile=$(dirname ${{ inputs.dockerfile }})"
+
+        # Dockerfile path
+        DOCKERFILE_NAME=$(basename ${{ inputs.dockerfile }})
+        if [ "$DOCKERFILE_NAME" != "Dockerfile" ]; then
+          BASE_ARGS="$BASE_ARGS --opt=filename=$DOCKERFILE_NAME"
+        fi
+
+        # Platform
+        if [ -n "${{ inputs.platforms }}" ]; then
+          BASE_ARGS="$BASE_ARGS --opt=platform=${{ inputs.platforms }}"
+        fi
+
+        # Build args
+        BUILD_ARGS='${{ inputs.build-args }}'
+        if [ -n "$BUILD_ARGS" ]; then
+          printf '%s\n' "$BUILD_ARGS" > /tmp/buildargs.txt
+          while IFS= read -r arg || [ -n "$arg" ]; do
+            if [ -n "$arg" ]; then
+              BASE_ARGS="$BASE_ARGS --opt=build-arg:$arg"
+            fi
+          done < /tmp/buildargs.txt
+        fi
+
+        # Secrets
+        SECRETS='${{ inputs.secrets }}'
+        if [ -n "$SECRETS" ]; then
+          printf '%s\n' "$SECRETS" > /tmp/secrets.txt
+          while IFS= read -r secret || [ -n "$secret" ]; do
+            if [ -n "$secret" ]; then
+              BASE_ARGS="$BASE_ARGS --secret=$secret"
+            fi
+          done < /tmp/secrets.txt
+        fi
+
+        # Cache settings - applied to all builds for optimal sharing
+        CACHE_ARGS=""
+        if [ "${{ inputs.cache }}" = "true" ] && [ -n "${{ inputs.cache-repo }}" ]; then
+          CACHE_REPO="${{ inputs.cache-repo }}"
+          CACHE_MODE="${{ inputs.cache-mode }}"
+          CACHE_ARGS="--import-cache=type=registry,ref=$CACHE_REPO --export-cache=type=registry,ref=$CACHE_REPO,mode=$CACHE_MODE,image-manifest=true,oci-mediatypes=true"
+        fi
+
+        # Extra arguments
+        if [ -n "${{ inputs.extra-args }}" ]; then
+          BASE_ARGS="$BASE_ARGS ${{ inputs.extra-args }}"
+        fi
+
+        # Track build results
+        FAILED_TARGETS=""
+        SUCCESS_TARGETS=""
+
+        # Process each target
+        echo "$TARGETS" | while IFS= read -r line || [ -n "$line" ]; do
+          # Trim whitespace
+          line=$(echo "$line" | xargs)
+
+          # Skip empty lines
+          if [ -z "$line" ]; then
+            continue
+          fi
+
+          # Parse target|destinations format
+          TARGET=$(echo "$line" | cut -d'|' -f1 | xargs)
+          DESTINATIONS=$(echo "$line" | cut -d'|' -f2 | xargs)
+
+          if [ -z "$TARGET" ] || [ -z "$DESTINATIONS" ]; then
+            echo "::warning::Invalid target line format (expected target|dest1,dest2): $line"
+            continue
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "Building target: $TARGET"
+          echo "Destinations: $DESTINATIONS"
+          echo "=========================================="
+
+          # Build the complete argument list for this target
+          BUILDKIT_ARGS="$BASE_ARGS"
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --opt=target=$TARGET"
+          BUILDKIT_ARGS="$BUILDKIT_ARGS --output=type=image,\"name=$DESTINATIONS\",push=true"
+          BUILDKIT_ARGS="$BUILDKIT_ARGS $CACHE_ARGS"
+
+          echo "BuildKit command: buildctl-daemonless.sh build $BUILDKIT_ARGS"
+
+          # Run BuildKit and capture output
+          BUILDKIT_OUTPUT_FILE=$(mktemp)
+          set +e
+          {
+            buildctl-daemonless.sh build $BUILDKIT_ARGS 2>&1
+            echo $? > "${BUILDKIT_OUTPUT_FILE}.exitcode"
+          } | tee "$BUILDKIT_OUTPUT_FILE"
+          set -e
+
+          BUILDKIT_EXIT_CODE=$(cat "${BUILDKIT_OUTPUT_FILE}.exitcode" 2>/dev/null || echo "1")
+          BUILDKIT_OUTPUT=$(cat "$BUILDKIT_OUTPUT_FILE" 2>/dev/null || echo "")
+          rm -f "$BUILDKIT_OUTPUT_FILE" "${BUILDKIT_OUTPUT_FILE}.exitcode"
+
+          # Validate exit code
+          case "$BUILDKIT_EXIT_CODE" in
+            ''|*[!0-9]*)
+              echo "Warning: Invalid exit code '$BUILDKIT_EXIT_CODE', treating as failure"
+              BUILDKIT_EXIT_CODE=1
+              ;;
+          esac
+
+          # Check for error indicators
+          if echo "$BUILDKIT_OUTPUT" | grep -q "^error: failed to solve"; then
+            if [ "$BUILDKIT_EXIT_CODE" -eq 0 ]; then
+              BUILDKIT_EXIT_CODE=1
+            fi
+          fi
+
+          if [ "$BUILDKIT_EXIT_CODE" -ne 0 ]; then
+            echo "::error::Failed to build target: $TARGET (exit code: $BUILDKIT_EXIT_CODE)"
+            FAILED_TARGETS="$FAILED_TARGETS $TARGET"
+          else
+            echo "Successfully built target: $TARGET"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            SUCCESS_TARGETS="$SUCCESS_TARGETS $TARGET"
+
+            # Extract digest
+            DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -E "(exporting|pushing) manifest" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+            if [ -z "$DIGEST" ]; then
+              DIGEST=$(echo "$BUILDKIT_OUTPUT" | grep -oE 'sha256:[a-f0-9]{64}' | tail -1 || true)
+            fi
+            if [ -n "$DIGEST" ]; then
+              echo "Digest for $TARGET: $DIGEST"
+              # Append to digests JSON (simple format for shell)
+              echo "${TARGET}=${DIGEST}" >> /tmp/digests.txt
+            fi
+          fi
+        done
+
+        # Read results from subshell
+        SUCCESS_COUNT=0
+        if [ -f /tmp/digests.txt ]; then
+          SUCCESS_COUNT=$(wc -l < /tmp/digests.txt | xargs)
+          # Build JSON output
+          DIGESTS_JSON="{"
+          FIRST=true
+          while IFS='=' read -r key value; do
+            if [ "$FIRST" = "true" ]; then
+              FIRST=false
+            else
+              DIGESTS_JSON="$DIGESTS_JSON,"
+            fi
+            DIGESTS_JSON="$DIGESTS_JSON\"$key\":\"$value\""
+          done < /tmp/digests.txt
+          DIGESTS_JSON="$DIGESTS_JSON}"
+          rm -f /tmp/digests.txt
+        else
+          DIGESTS_JSON="{}"
+        fi
+
+        echo "success_count=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+        echo "digests=$DIGESTS_JSON" >> $GITHUB_OUTPUT
+
+        echo ""
+        echo "=========================================="
+        echo "Build Summary"
+        echo "=========================================="
+        echo "Total targets: $TOTAL_COUNT"
+        echo "Successful: $SUCCESS_COUNT"
+        echo "Failed: $((TOTAL_COUNT - SUCCESS_COUNT))"
+
+        # Fail if any target failed
+        if [ "$SUCCESS_COUNT" -lt "$TOTAL_COUNT" ]; then
+          echo "::error::Some targets failed to build"
+          exit 1
+        fi
+
+        echo "All targets built successfully!"
