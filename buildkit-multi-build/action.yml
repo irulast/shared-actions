@@ -157,6 +157,8 @@ runs:
         # Host network mode - allows build to access host network services (e.g., sccache with MinIO)
         if [ "${{ inputs.network-host }}" = "true" ]; then
           echo "Enabling host network mode for build"
+          # Must allow the entitlement on both daemon and client side
+          export BUILDKITD_FLAGS="${BUILDKITD_FLAGS} --allow-insecure-entitlement network.host"
           BASE_ARGS="$BASE_ARGS --allow=network.host --opt=network=host"
         fi
 
